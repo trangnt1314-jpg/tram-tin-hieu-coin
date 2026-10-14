@@ -136,6 +136,7 @@ canvas{display:block;width:100%;height:100%}
   <div class="tabs" id="mkTabs" role="tablist" aria-label="Thị trường">
     <button role="tab" id="mkCoin" aria-selected="true">Coin</button>
     <button role="tab" id="mkStock" aria-selected="false">Cổ phiếu</button>
+    <button role="tab" id="mkFx" aria-selected="false">Forex</button>
   </div>
   <div class="tabs" role="tablist">
     <button role="tab" id="tabChart" aria-selected="true">Biểu đồ</button>
@@ -184,7 +185,7 @@ canvas{display:block;width:100%;height:100%}
     <div class="rows" id="rows"></div>
   </section>
 
-  <p class="foot">Công cụ hỗ trợ phân tích, không phải lời khuyên đầu tư. Dự báo gom từ MACD, KDJ, StochRSI, Bollinger, Ichimoku, Fibonacci, vùng giá, Elliott, volume và xu hướng EMA; đây là kịch bản ước tính cho các nến sắp tới, chưa xảy ra. Tín hiệu chỉ là xác suất, không có chỉ báo nào dự báo chắc chắn. Backtest giả định khớp lệnh tại giá đóng cửa nến tín hiệu, phí 0,1% mỗi chiều, nếu cùng một nến chạm cả cắt lỗ và chốt lời thì tính là thua.</p>
+  <p class="foot">Công cụ hỗ trợ phân tích, không phải lời khuyên đầu tư. Dự báo gom từ MACD, KDJ, StochRSI, Bollinger, Ichimoku, Fibonacci, vùng giá, Elliott, volume và xu hướng EMA; đây là kịch bản ước tính cho các nến sắp tới, chưa xảy ra. Tín hiệu chỉ là xác suất, không có chỉ báo nào dự báo chắc chắn. Backtest giả định khớp lệnh tại giá đóng cửa nến tín hiệu, phí giả định theo từng thị trường (coin 0,1% mỗi chiều, cổ phiếu 0,05%, forex 0,03%), nếu cùng một nến chạm cả cắt lỗ và chốt lời thì tính là thua.</p>
 </main>
 
 <script>
@@ -199,7 +200,7 @@ const isN = v => typeof v === 'number' && !isNaN(v);
 function fmt(p) {
   if (!isFinite(p)) return '–';
   const a = Math.abs(p);
-  const d = a >= 1000 ? 2 : a >= 100 ? 3 : a >= 1 ? 4 : a >= 0.1 ? 5 : a >= 0.01 ? 6 : 8;
+  const d = a >= 1000 ? 2 : a >= 100 ? 3 : a >= 1 ? (globalThis.__fx ? 5 : 4) : a >= 0.1 ? 5 : a >= 0.01 ? 6 : 8;
   return p.toFixed(d);
 }
 
@@ -461,7 +462,7 @@ function fibSwing(piv, i, atr) {
 /* ---------- Backtest ---------- */
 function simulate(sig, h, l, c, n, MAXB) {
   const e = sig.entry, sl = sig.sl, tp = sig.tp, risk = Math.abs(e - sl), buy = sig.side === 'buy';
-  const fee = (e * 0.002) / risk; // phí 0,1% mỗi chiều quy ra R
+  const fee = (e * (globalThis.__fee == null ? 0.002 : globalThis.__fee)) / risk; // phí quy ra R, theo từng thị trường
   const end = Math.min(n - 1, sig.i + MAXB);
   for (let j = sig.i + 1; j <= end; j++) {
     const hitSL = buy ? l[j] <= sl : h[j] >= sl;
@@ -823,7 +824,7 @@ const $=id=>document.getElementById(id);
 const TFS={'15m':900000,'1h':3600000,'4h':14400000,'1d':86400000};
 const LAYERS=[['fc','Dự báo'],['sig','Tín hiệu quá khứ'],['ichi','Ichimoku'],['fib','Fibonacci'],['zones','Vùng giá'],['bb','Bollinger'],['ew','Elliott'],['ema','EMA 50/200'],['macd','MACD'],['kdj','KDJ'],['srsi','StochRSI']];
 const COL={buy:'#0E8A6D',sell:'#C93A52',zone:'#C98A0B',wave:'#4B46B8',ink:'#17222D',mut:'#5B6B7A',line:'#DDE4EA',blue:'#2F7DBE',orange:'#D9822B',purple:'#9B3FA0',ema200:'#8A5A9E'};
-const S={tab:'chart',tf:'4h',sym:'BTCUSDT',L:{fc:1,ichi:1,fib:1,sig:1,zones:1,bb:1,ew:1,ema:0,macd:1,kdj:1,srsi:1},caches:{coin:new Map(),stock:new Map()},tops:{coin:null,stock:null},mkt:'coin',saved:{},scanTok:0,cur:null,selSig:null,selBar:null,
+const S={tab:'chart',tf:'4h',sym:'BTCUSDT',L:{fc:1,ichi:1,fib:1,sig:1,zones:1,bb:1,ew:1,ema:0,macd:1,kdj:1,srsi:1},caches:{coin:new Map(),stock:new Map(),fx:new Map()},tops:{coin:null,stock:null,fx:null},mkt:'coin',saved:{},scanTok:0,cur:null,selSig:null,selBar:null,
   scan:[],filter:'all',onlyPos:false,scanning:false,scannedTf:null,hits:[],live:{},lastV:{},mtfLive:null,mtfClosed:null};
 Object.defineProperty(S,'cache',{get(){return S.caches[S.mkt];}});
 Object.defineProperty(S,'top',{get(){return S.tops[S.mkt];},set(v){S.tops[S.mkt]=v;}});
@@ -832,10 +833,25 @@ const V={barW:9,end:0};
 /* ---------- dữ liệu ---------- */
 const HOSTS=['https://data-api.binance.vision','https://api.binance.com','https://api1.binance.com','https://api-gcp.binance.com'];
 const MKT={
-  coin:{label:'Coin',src:'Binance',hosts:HOSTS,rest:'/api/v3',ws:q=>WSHOSTS.map(h=>h+'/stream?streams='+q),def:'BTCUSDT',minBars:400,warm:250,demo:true},
-  stock:{label:'Cổ phiếu',src:'Binance Futures',hosts:['https://fapi.binance.com'],rest:'/fapi/v1',ws:q=>['wss://fstream.binance.com/stream?streams='+q,'wss://fstream.binance.com/market/stream?streams='+q],def:'TSLAUSDT',minBars:150,warm:100,demo:false}
+  coin:{label:'Coin',src:'Binance',hosts:HOSTS,rest:'/api/v3',ws:q=>WSHOSTS.map(h=>h+'/stream?streams='+q),def:'BTCUSDT',minBars:400,minRaw:250,warm:250,demo:true,fee:0.002},
+  stock:{label:'Cổ phiếu',src:'Binance Futures',hosts:['https://fapi.binance.com'],rest:'/fapi/v1',ws:q=>['wss://fstream.binance.com/stream?streams='+q,'wss://fstream.binance.com/market/stream?streams='+q],def:'TSLAUSDT',minBars:150,minRaw:60,warm:100,demo:false,fee:0.001},
+  fx:{label:'Forex',src:'Bybit',hosts:['https://api.bybit.com','https://api.bytick.com'],rest:'/v5',bybit:true,wsUrls:['wss://stream.bybit.com/v5/public/linear'],def:'EURUSDUSDT',minBars:80,minRaw:100,warm:60,demo:false,fee:0.0006,mtf:['4h','1h','15m'],tfs:['15m','1h','4h'],btPages:{'4h':1,'1h':1,'15m':4}}
 };
-const NET={coin:{pref:0,down:0,err:''},stock:{pref:0,down:0,err:''}};
+const IVB={'15m':'15','1h':'60','4h':'240','1d':'D'},IVB_REV={'15':'15m','60':'1h','240':'4h','D':'1d'};
+function klPath(mk,sym,tf,limit,end){
+  if(mk==='fx') return `/v5/market/kline?category=linear&symbol=${sym}&interval=${IVB[tf]}&limit=${limit}${end?'&end='+end:''}`;
+  return `${MKT[mk].rest}/klines?symbol=${sym}&interval=${tf}&limit=${limit}${end?'&endTime='+end:''}`;
+}
+function klParse(mk,raw,tf){
+  if(mk==='fx'){
+    if(!raw||raw.retCode!==0){const e=new Error((raw&&raw.retMsg)||'lỗi Bybit');if(raw&&(raw.retCode===10001||/symbol/i.test(raw.retMsg||''))) e.bad=true;throw e;}
+    const st=TFS[tf];
+    return raw.result.list.map(k=>({t:+k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5],ct:+k[0]+st-1})).sort((a,b)=>a.t-b.t);
+  }
+  if(!Array.isArray(raw)) throw new Error('dữ liệu không hợp lệ');
+  return raw.map(k=>({t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5],ct:k[6]}));
+}
+const NET={coin:{pref:0,down:0,err:''},stock:{pref:0,down:0,err:''},fx:{pref:0,down:0,err:''}};
 const netReset=mk=>{const N=NET[mk||S.mkt];N.down=0;N.err='';};
 async function getJSON(path,mk){
   mk=mk||S.mkt;const N=NET[mk],H=MKT[mk].hosts;
@@ -862,9 +878,9 @@ async function load(sym,tf,mk){
   if(c&&(Date.now()-c.t<60000||(c.ws&&RT.ok&&RT.sym===sym&&RT.mk===mk))) return c;
   let C,demo=false;
   try{
-    const raw=await getJSON(`${MKT[mk].rest}/klines?symbol=${sym}&interval=${tf}&limit=1000`,mk);
-    if(!Array.isArray(raw)||raw.length<(mk==='stock'?60:250)) throw new Error('ít dữ liệu');
-    C=raw.map(k=>({t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5],ct:k[6]}));
+    const raw=await getJSON(klPath(mk,sym,tf,1000),mk);
+    C=klParse(mk,raw,tf);
+    if(C.length<MKT[mk].minRaw) throw new Error('ít dữ liệu');
     if(C[C.length-1].ct>Date.now()) C.pop(); // bỏ nến đang chạy để tín hiệu không bị đổi
   }catch(e){
     if(e.bad||!MKT[mk].demo) throw e;
@@ -886,6 +902,13 @@ async function loadTop(n,mk){
       const stable=/^(USDC|FDUSD|TUSD|USDP|DAI|BUSD|EUR|AEUR|USD1|USDE|XUSD|PAXG|WBTC|WBETH)$/;
       list=all.filter(t=>t.symbol.endsWith('USDT')).map(t=>({sym:t.symbol,base:t.symbol.slice(0,-4),vol:+t.quoteVolume,chg:+t.priceChangePercent}))
         .filter(t=>!stable.test(t.base)&&!/(UP|DOWN|BULL|BEAR)$/.test(t.base)&&t.vol>0).sort((a,b)=>b.vol-a.vol).slice(0,40);
+    }else if(mk==='fx'){
+      const j=await getJSON('/v5/market/tickers?category=linear',mk);
+      if(!j||j.retCode!==0) throw new Error((j&&j.retMsg)||'lỗi Bybit');
+      const re=/^(USD|EUR|GBP|JPY|AUD|NZD|CAD|CHF)(USD|EUR|GBP|JPY|AUD|NZD|CAD|CHF)USDT$/;
+      list=j.result.list.filter(t=>re.test(t.symbol)).map(t=>({sym:t.symbol,base:t.symbol.slice(0,-4),vol:+t.turnover24h,chg:+t.price24hPcnt*100}))
+        .sort((a,b)=>b.vol-a.vol);
+      if(!list.length) throw new Error('không tìm thấy hợp đồng forex');
     }else{
       const [info,all]=await Promise.all([getJSON('/fapi/v1/exchangeInfo',mk),getJSON('/fapi/v1/ticker/24hr',mk)]);
       const eq=new Set();
@@ -900,7 +923,7 @@ async function loadTop(n,mk){
     }
     S.tops[mk]=list;
   }catch(e){
-    S.tops[mk]=(mk==='coin'?FALLBACK:KNOWN_EQ.slice(0,12)).map(b=>({sym:b+'USDT',base:b,chg:null}));
+    S.tops[mk]=(mk==='coin'?FALLBACK:mk==='fx'?['EURUSD','GBPUSD','USDJPY']:KNOWN_EQ.slice(0,12)).map(b=>({sym:b+'USDT',base:b,chg:null}));
   }
   if(S.mkt===mk) $('symList').innerHTML=S.tops[mk].map(t=>`<option value="${t.sym}">`).join('');
   return S.tops[mk].slice(0,n);
@@ -1207,14 +1230,16 @@ function draw(){
 /* ---------- cột bên phải ---------- */
 /* ---------- Kết luận đa khung: 1d + 4h = xu hướng, 1h = xác nhận, 15m = điểm vào ---------- */
 const MTF_ORDER=['1d','4h','1h','15m'];
+const mtfOf=mk=>MKT[mk||S.mkt].mtf||MTF_ORDER;
 const MTF_W={'1d':0.4,'4h':0.3,'1h':0.2,'15m':0.1};
 const MTF_ROLE={'1d':'Xu hướng lớn','4h':'Xu hướng lớn','1h':'Xác nhận','15m':'Điểm vào'};
 let mtfTok=0;
 const dirTxt=d=>d==='buy'?'Tăng':d==='sell'?'Giảm':'Chưa rõ';
 const dirSg=d=>d==='buy'?1:d==='sell'?-1:0;
 function mtfVerdict(R,no15){
-  const D1=dirSg(R['1d'].dir),H4=dirSg(R['4h'].dir),H1=dirSg(R['1h'].dir),M15=no15?0:dirSg(R['15m'].dir);
-  const tfs=no15?MTF_ORDER.slice(0,3):MTF_ORDER,score=tfs.reduce((a,tf)=>a+MTF_W[tf]*R[tf].norm,0)/tfs.reduce((a,tf)=>a+MTF_W[tf],0);
+  const g=tf=>R[tf]?dirSg(R[tf].dir):0;
+  const D1=g('1d'),H4=g('4h'),H1=g('1h'),M15=no15?0:g('15m');
+  const tfs=Object.keys(R).filter(tf=>!(no15&&tf==='15m')),score=tfs.reduce((a,tf)=>a+MTF_W[tf]*R[tf].norm,0)/tfs.reduce((a,tf)=>a+MTF_W[tf],0);
   if(D1*H4===-1) return {cls:'wait',side:null,score,txt:'CHỜ',why:'Khung 1 ngày và 4h đang ngược nhau nên chưa có hướng chắc. Đứng ngoài đến khi hai khung này cùng chiều.'};
   const ctx=D1+H4>0?1:D1+H4<0?-1:0;
   if(ctx===0) return {cls:'wait',side:null,score,txt:'CHỜ',why:'Cả 1 ngày và 4h đều chưa cho xu hướng rõ ràng.'};
@@ -1230,14 +1255,15 @@ async function renderMTF(){
   const el=$('mtf');if(!el) return;
   const sym=S.sym,tok=++mtfTok;
   el.innerHTML='<div class="card mtf"><h3>Kết luận đa khung</h3><p class="note">Đang tổng hợp 4 khung 15m, 1h, 4h, 1 ngày…</p></div>';
-  const ents=await Promise.all(MTF_ORDER.map(tf=>load(sym,tf).catch(()=>null)));
+  const ord=mtfOf();
+  const ents=await Promise.all(ord.map(tf=>load(sym,tf).catch(()=>null)));
   if(tok!==mtfTok||sym!==S.sym) return;
   const box=$('mtf');if(!box) return;
   if(ents.some(e=>!e)){box.innerHTML='<div class="card mtf"><h3>Kết luận đa khung</h3><p class="note">Chưa tải đủ dữ liệu 4 khung nên chưa kết luận được. Bấm Làm mới để thử lại.</p></div>';return;}
-  const R={};MTF_ORDER.forEach((tf,i)=>{const fc=ents[i].A.fc;R[tf]={dir:fc.dir,pct:fc.pct,norm:fc.bias/fc.max,ent:ents[i]};});
+  const R={};ord.forEach((tf,i)=>{const fc=ents[i].A.fc;R[tf]={dir:fc.dir,pct:fc.pct,norm:fc.bias/fc.max,ent:ents[i]};});
   const v=mtfVerdict(R),demo=ents.some(e=>e.demo);
   const want=v.side;
-  const rows=MTF_ORDER.map(tf=>{
+  const rows=ord.map(tf=>{
     const r=R[tf],mark=want?(r.dir===want?'<span class="ok">✓</span>':'<span class="no">✗</span>'):'';
     return `<tr><td>${tf}</td><td class="mut">${MTF_ROLE[tf]}</td><td><span class="pill ${r.dir==='buy'?'buy':r.dir==='sell'?'sell':'wait'}">${dirTxt(r.dir)}</span></td><td class="r">${r.pct}/100 ${mark}</td></tr>`;
   }).join('');
@@ -1256,7 +1282,7 @@ async function renderMTF(){
     <div class="kv" style="margin-top:6px"><span class="mut">Điểm đa khung (−100 đến +100)</span><b>${v.score>0?'+':''}${Math.round(v.score*100)}</b></div>
     ${lv}
     <table>${rows}</table>
-    <p class="note">Quy tắc: 1 ngày và 4h quyết định hướng, 1h xác nhận, 15m chọn điểm vào. Hai khung lớn ngược nhau thì luôn là CHỜ. Tính trên nến đã đóng; chỉ là xác suất, luôn đặt cắt lỗ.${S.mkt==='stock'?' Đây là giá hợp đồng vĩnh viễn trên Binance Futures: giao dịch 24/7, có phí funding mỗi 8 giờ và có thể lệch giá cổ phiếu thật ngoài giờ Mỹ. Nếu dùng đòn bẩy, hãy tính khoảng cách tới giá thanh lý trước khi đặt cắt lỗ.':''}${demo?' Đang dùng dữ liệu mô phỏng nên kết luận này chưa có giá trị.':''}</p>
+    <p class="note">Quy tắc: 1 ngày và 4h quyết định hướng, 1h xác nhận, 15m chọn điểm vào. Hai khung lớn ngược nhau thì luôn là CHỜ. Tính trên nến đã đóng; chỉ là xác suất, luôn đặt cắt lỗ.${S.mkt==='fx'?' Đây là giá hợp đồng vĩnh viễn forex trên Bybit (tổng hợp, giao dịch 24/7, có phí funding), có thể lệch giá forex thật, nhất là cuối tuần. Hợp đồng mới ra mắt 8/9/2026 nên chưa có khung 1 ngày, kết luận dựa trên 4h, 1h và 15m. Đòn bẩy cao dễ chạm giá thanh lý, hãy tính trước khoảng cách này.':''}${S.mkt==='stock'?' Đây là giá hợp đồng vĩnh viễn trên Binance Futures: giao dịch 24/7, có phí funding mỗi 8 giờ và có thể lệch giá cổ phiếu thật ngoài giờ Mỹ. Nếu dùng đòn bẩy, hãy tính khoảng cách tới giá thanh lý trước khi đặt cắt lỗ.':''}${demo?' Đang dùng dữ liệu mô phỏng nên kết luận này chưa có giá trị.':''}</p>
     <button class="go" id="mtfBtBtn" style="width:100%;margin-top:10px">${S.mtfBt&&!S.mtfBt.err?'Chạy lại backtest đa khung':'Chạy backtest đa khung (6 coin lớn, ~4 tháng)'}</button>
     <div id="mtfBt"></div>
   </div>`;
@@ -1270,16 +1296,17 @@ async function renderMTF(){
 const BT_PAGES={'1d':1,'4h':2,'1h':4,'15m':12};
 async function loadDeep(sym,tf,pages,mk){
   const step=TFS[tf],now=Date.now(),reqs=[];
-  for(let k=0;k<pages;k++) reqs.push(getJSON(`${MKT[mk].rest}/klines?symbol=${sym}&interval=${tf}&limit=1000&endTime=${now-k*1000*step}`,mk));
+  for(let k=0;k<pages;k++) reqs.push(getJSON(klPath(mk,sym,tf,1000,now-k*1000*step),mk));
   const res=await Promise.all(reqs),m=new Map();
-  for(const raw of res) for(const k of raw){ if(+k[6]<=now) m.set(k[0],{t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5],ct:+k[6]}); }
+  for(const raw of res) for(const o of klParse(mk,raw,tf)){ if(o.ct<=now) m.set(o.t,o); }
   return [...m.values()].sort((a,b)=>a.t-b.t);
 }
 const tick=()=>new Promise(r=>setTimeout(r,0));
 async function btCoin(sym,mk){
   const D={},A={};
-  await Promise.all(MTF_ORDER.map(async tf=>{D[tf]=await loadDeep(sym,tf,BT_PAGES[tf],mk);}));
-  for(const tf of MTF_ORDER){ if(D[tf].length<MKT[mk].minBars) throw new Error('ít dữ liệu '+tf); A[tf]=analyze(D[tf]); await tick(); }
+  const ord=mtfOf(mk),BP=MKT[mk].btPages||BT_PAGES;
+  await Promise.all(ord.map(async tf=>{D[tf]=await loadDeep(sym,tf,BP[tf],mk);}));
+  for(const tf of ord){ if(D[tf].length<MKT[mk].minBars) throw new Error('ít dữ liệu '+tf); A[tf]=analyze(D[tf]); await tick(); }
   const C=D['1h'],n=C.length,h=C.map(x=>x.h),l=C.map(x=>x.l),c=C.map(x=>x.c),atr=A['1h'].ind.atr;
   const startCt=D['15m'][0].ct+300*TFS['15m'];
   let w0=-1;for(let i=250;i<n;i++){ if(C[i].ct>=startCt){w0=i;break;} }
@@ -1289,7 +1316,7 @@ async function btCoin(sym,mk){
   const ready=v=>v.side==='buy'&&/^MUA( MẠNH)?$/.test(v.txt);
   for(let i=w0;i<n-1;i++){
     const ct=C[i].ct,R={'1h':A['1h'].fcAt(i)};let ok=true;
-    for(const tf of ['1d','4h','15m']){
+    for(const tf of ord.filter(t=>t!=='1h')){
       const arr=D[tf];while(ptr[tf]+1<arr.length&&arr[ptr[tf]+1].ct<=ct) ptr[tf]++;
       if(arr[ptr[tf]].ct>ct||ptr[tf]<MKT[mk].warm){ok=false;break;}
       R[tf]=A[tf].fcAt(ptr[tf]);
@@ -1346,11 +1373,11 @@ function renderMtfBt(){
     <table style="font-size:13px"><tr class="mut"><td style="width:auto"></td><td class="r">Lệnh</td><td class="r">Thắng</td><td class="r">Kỳ vọng</td><td class="r">PF</td><td class="r">30% mới</td></tr>
     ${row('1h đơn lẻ (cũ)',r.base)}${row('Đa khung 1d+4h+1h',r.mtf3)}${row('Đủ 4 khung',r.mtf4)}</table>
     <p style="font-size:14px;margin:8px 0 4px">${msg}</p>
-    ${S.mkt==='stock'?'<p class="note">Hợp đồng cổ phiếu mới niêm yết từ đầu 2026 nên lịch sử ngắn và mẫu nhỏ, chỉ mang tính tham khảo. Backtest chưa tính phí funding.</p>':''}<p class="note">Chỉ tính lệnh mua. Vào ở giá đóng nến 1h, cắt lỗ 1,5 ATR(1h), chốt lời 2R, giữ tối đa 60 nến, phí 0,1% mỗi chiều. Kỳ vọng tính theo R (1R = mức rủi ro mỗi lệnh). Mỗi tín hiệu chỉ dùng thông tin đã có tại lúc nến đóng. Quá khứ không đảm bảo tương lai, và đây là công cụ phân tích, không phải lời khuyên đầu tư.</p>`;
+    ${S.mkt==='fx'?'<p class="note">Hợp đồng forex mới ra mắt 8/9/2026, lịch sử chỉ khoảng một tháng nên kết quả backtest gần như không có ý nghĩa thống kê. Mức phí là giả định, bạn nên đối chiếu với phí thật của Bybit.</p>':''}${S.mkt==='stock'?'<p class="note">Hợp đồng cổ phiếu mới niêm yết từ đầu 2026 nên lịch sử ngắn và mẫu nhỏ, chỉ mang tính tham khảo. Backtest chưa tính phí funding.</p>':''}<p class="note">Chỉ tính lệnh mua. Vào ở giá đóng nến 1h, cắt lỗ 1,5 ATR(1h), chốt lời 2R, giữ tối đa 60 nến, phí giả định ${(((globalThis.__fee==null?0.002:globalThis.__fee))*50).toFixed(2).replace('.',',')}% mỗi chiều. Kỳ vọng tính theo R (1R = mức rủi ro mỗi lệnh). Mỗi tín hiệu chỉ dùng thông tin đã có tại lúc nến đóng. Quá khứ không đảm bảo tương lai, và đây là công cụ phân tích, không phải lời khuyên đầu tư.</p>`;
 }
 
 /* ---------- Realtime: WebSocket Binance cho cả 4 khung (dự phòng: hỏi giá mỗi 4 giây) ---------- */
-const RT={mk:'coin',ws:null,sym:null,ok:false,lastMsg:0,retry:0,timer:null,poll:null,dirty:false,provAt:0,prov:false,hostIdx:0,rs:{}};
+const RT={hb:null,mk:'coin',ws:null,sym:null,ok:false,lastMsg:0,retry:0,timer:null,poll:null,dirty:false,provAt:0,prov:false,hostIdx:0,rs:{}};
 const WSHOSTS=['wss://data-stream.binance.vision','wss://stream.binance.com:9443','wss://stream.binance.com'];
 function liveOf(E){const o=S.live[E.sym+'|'+E.tf];return o&&o.t>E.C[E.C.length-1].t?o:null;}
 function toast(msg,cls){
@@ -1375,7 +1402,7 @@ async function provMTF(){
   RT.prov=true;
   try{
     const sym=S.sym;let R={};
-    for(const tf of MTF_ORDER){
+    for(const tf of mtfOf()){
       const ent=S.cache.get(sym+'|'+tf);if(!ent||ent.demo){R=null;break;}
       const lv=S.live[sym+'|'+tf],last=ent.C[ent.C.length-1];let fc=ent.A.fc;
       if(lv&&lv.t>last.t){fc=analyze(ent.C.concat([lv])).fc;await tick();}
@@ -1418,32 +1445,45 @@ function rtCandle(sym,tf,o,closed){
   }else if(S.tab==='chart'){renderMTF();}
 }
 function rtStop(){
-  clearTimeout(RT.timer);clearInterval(RT.poll);RT.poll=null;RT.ok=false;
+  clearTimeout(RT.timer);clearInterval(RT.poll);clearInterval(RT.hb);RT.poll=null;RT.ok=false;
   if(RT.ws){const w=RT.ws;RT.ws=null;w.onopen=w.onmessage=w.onclose=w.onerror=null;try{w.close();}catch(e){}}
 }
 async function rtPoll(){
   const sym=RT.sym;if(!sym||RT.ok||document.hidden) return;
-  for(const tf of MTF_ORDER){
+  for(const tf of mtfOf(RT.mk)){
     try{
-      const raw=await getJSON(`${MKT[RT.mk].rest}/klines?symbol=${sym}&interval=${tf}&limit=2`,RT.mk),now=Date.now();
-      for(const k of raw) rtCandle(sym,tf,{t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5],ct:k[6]},k[6]<=now);
+      const raw=await getJSON(klPath(RT.mk,sym,tf,2),RT.mk),now=Date.now();
+      for(const o of klParse(RT.mk,raw,tf)) rtCandle(sym,tf,o,o.ct<=now);
     }catch(e){}
   }
 }
 function rtConnect(){
   const sym=RT.sym;if(!sym||typeof WebSocket==='undefined'){if(sym&&!RT.poll){RT.poll=setInterval(rtPoll,4000);updateSrc();}return;}
-  const streams=MTF_ORDER.map(tf=>sym.toLowerCase()+'@kline_'+tf).join('/');
+  const M=MKT[RT.mk],ord=mtfOf(RT.mk),streams=ord.map(tf=>sym.toLowerCase()+'@kline_'+tf).join('/');
   let ws,opened=false;
-  const urls=MKT[RT.mk].ws(streams);
+  const urls=M.bybit?M.wsUrls:M.ws(streams);
   try{ws=new WebSocket(urls[RT.hostIdx%urls.length]);}catch(e){RT.hostIdx++;RT.timer=setTimeout(rtConnect,3000);return;}
   RT.ws=ws;
   const guard=setTimeout(()=>{if(!opened){try{ws.close();}catch(e){}}},6000);
   ws.onopen=()=>{opened=true;clearTimeout(guard);RT.ok=true;RT.retry=0;clearInterval(RT.poll);RT.poll=null;
+    if(M.bybit){
+      try{ws.send(JSON.stringify({op:'subscribe',args:ord.map(tf=>'kline.'+IVB[tf]+'.'+sym)}));}catch(e){}
+      clearInterval(RT.hb);RT.hb=setInterval(()=>{try{ws.send('{"op":"ping"}');}catch(e){}},20000);
+    }
     for(const [k,e] of S.cache) if(k.startsWith(sym+'|')&&!e.demo) e.ws=true;updateSrc();};
-  ws.onmessage=ev=>{try{const d=JSON.parse(ev.data).data;if(d&&d.k){const k=d.k;rtCandle(d.s,k.i,{t:k.t,o:+k.o,h:+k.h,l:+k.l,c:+k.c,v:+k.v,ct:k.T},k.x);}}catch(e){}};
+  ws.onmessage=ev=>{try{
+    const j=JSON.parse(ev.data);
+    if(M.bybit){
+      if(j.op==='subscribe'&&j.success===false){try{ws.close();}catch(e){}return;}
+      if(j.topic&&j.data&&j.topic.startsWith('kline.')){
+        const tf=IVB_REV[j.topic.split('.')[1]];
+        if(tf) for(const k of j.data) rtCandle(sym,tf,{t:+k.start,o:+k.open,h:+k.high,l:+k.low,c:+k.close,v:+k.volume,ct:+k.start+TFS[tf]-1},!!k.confirm);
+      }
+    }else{const d=j.data;if(d&&d.k){const k=d.k;rtCandle(d.s,k.i,{t:k.t,o:+k.o,h:+k.h,l:+k.l,c:+k.c,v:+k.v,ct:k.T},k.x);}}
+  }catch(e){}};
   ws.onerror=()=>{try{ws.close();}catch(e){}};
   ws.onclose=()=>{
-    clearTimeout(guard);if(RT.ws!==ws) return;
+    clearTimeout(guard);clearInterval(RT.hb);if(RT.ws!==ws) return;
     RT.ok=false;RT.hostIdx++;
     if(!RT.poll) RT.poll=setInterval(rtPoll,4000);
     updateSrc();RT.timer=setTimeout(rtConnect,Math.min(15000,1500*(++RT.retry)));
@@ -1604,7 +1644,7 @@ async function showChart(){
   }catch(err){
     const stk=S.mkt==='stock';
     $('aside').innerHTML=err&&err.bad
-      ?`<div class="card"><h3>Không tìm thấy ${stk?'hợp đồng':'cặp'} ${sym}</h3><p class="note">${stk?'Hãy nhập đúng mã hợp đồng cổ phiếu trên Binance Futures, ví dụ TSLAUSDT hoặc NVDAUSDT.':'Hãy nhập đúng mã trên Binance, ví dụ BTCUSDT hoặc SOLUSDT.'}</p></div>`
+      ?`<div class="card"><h3>Không tìm thấy ${stk?'hợp đồng':'cặp'} ${sym}</h3><p class="note">${stk?'Hãy nhập đúng mã hợp đồng cổ phiếu trên Binance Futures, ví dụ TSLAUSDT hoặc NVDAUSDT.':S.mkt==='fx'?'Hãy nhập đúng mã hợp đồng forex trên Bybit, ví dụ EURUSD, GBPUSD hoặc USDJPY.':'Hãy nhập đúng mã trên Binance, ví dụ BTCUSDT hoặc SOLUSDT.'}</p></div>`
       :`<div class="card"><h3>Không tải được dữ liệu ${MKT[S.mkt].src}</h3><p class="note">${(err&&err.message)||'lỗi mạng'}. Bấm Làm mới để thử lại. Nếu lỗi lặp lại, có thể mạng của bạn đang bị chặn tới ${MKT[S.mkt].hosts[0].replace('https://','')}.</p></div>`;
     S.cur=null;draw();return;
   }
@@ -1620,8 +1660,11 @@ function applyMarket(m){
   S.mkt=m;
   const nx=S.saved[m]||{sym:MKT[m].def,scan:[],scannedTf:null,hits:[],selSig:null,selBar:null,selEw:null,cur:null,mtfBt:null,mtfClosed:null,mtfLive:null,lastV:{}};
   for(const k of MK_KEYS) S[k]=nx[k];
-  $('mkCoin').setAttribute('aria-selected',m==='coin');$('mkStock').setAttribute('aria-selected',m==='stock');
-  $('symIn').setAttribute('aria-label',m==='stock'?'Mã hợp đồng cổ phiếu':'Cặp coin');
+  $('mkCoin').setAttribute('aria-selected',m==='coin');$('mkStock').setAttribute('aria-selected',m==='stock');$('mkFx').setAttribute('aria-selected',m==='fx');
+  $('symIn').setAttribute('aria-label',m==='stock'?'Mã hợp đồng cổ phiếu':m==='fx'?'Cặp forex':'Cặp coin');
+  globalThis.__fx=(m==='fx');globalThis.__fee=MKT[m].fee;
+  const tl=MKT[m].tfs||Object.keys(TFS);if(!tl.includes(S.tf)) S.tf='4h';
+  tfButtons($('tfChart'));tfButtons($('tfScan'));
   try{localStorage.setItem('mkt',m);}catch(e){}
 }
 function switchMarket(m){
@@ -1638,9 +1681,9 @@ async function refreshCur(){
   const e=S.cur;
   if(e&&!e.demo){
     try{
-      const raw=await getJSON(`${MKT[S.mkt].rest}/klines?symbol=${e.sym}&interval=${e.tf}&limit=10`);
+      const raw=await getJSON(klPath(S.mkt,e.sym,e.tf,10));
       const m=new Map(e.C.map(k=>[k.t,k]));
-      for(const k of raw){const o={t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5],ct:k[6]};if(o.ct<=Date.now()) m.set(o.t,o);}
+      for(const o of klParse(S.mkt,raw,e.tf)){if(o.ct<=Date.now()) m.set(o.t,o);}
       const C=[...m.values()].sort((a,b)=>a.t-b.t).slice(-1000);
       const ent={sym:e.sym,tf:e.tf,C,A:analyze(C),t:Date.now(),demo:false,err:''};
       S.cache.set(e.sym+'|'+e.tf,ent);S.cur=ent;for(const k of Object.keys(TFS)) if(k!==e.tf) S.cache.delete(e.sym+'|'+k);
@@ -1666,7 +1709,7 @@ function setTab(t){
   if(t==='scan'&&(!S.scan.length||S.scannedTf!==S.tf)&&!S.scanning) runScan();
 }
 function tfButtons(host){
-  host.innerHTML=Object.keys(TFS).map(k=>`<button class="chip" data-tf="${k}" aria-pressed="${k===S.tf}">${k}</button>`).join(' ');
+  host.innerHTML=(MKT[S.mkt].tfs||Object.keys(TFS)).map(k=>`<button class="chip" data-tf="${k}" aria-pressed="${k===S.tf}">${k}</button>`).join(' ');
 }
 function setTf(tf){
   if(tf===S.tf) return;
@@ -1732,13 +1775,13 @@ function init(){
   $('retry').onclick=()=>{netReset();S.cache.clear();S.scan=[];S.scannedTf=null;showChart();if(S.tab==='scan')runScan();};
   $('onlyPos').onclick=e=>{S.onlyPos=!S.onlyPos;e.currentTarget.setAttribute('aria-pressed',S.onlyPos);renderScan();};
   $('rescan').onclick=()=>{S.cache.clear();S.scan=[];runScan();};
-  const go=()=>{let s=$('symIn').value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');if(!s)return;if(S.mkt==='stock'){if(!/(USDT|USDC)$/.test(s))s+='USDT';}else if(!/(USDT|USDC|BTC|ETH|FDUSD)$/.test(s))s+='USDT';S.sym=s;showChart();};
+  const go=()=>{let s=$('symIn').value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');if(!s)return;if(S.mkt==='stock'||S.mkt==='fx'){if(!/(USDT|USDC)$/.test(s))s+='USDT';}else if(!/(USDT|USDC|BTC|ETH|FDUSD)$/.test(s))s+='USDT';S.sym=s;showChart();};
   $('symGo').onclick=go;$('symIn').addEventListener('keydown',e=>{if(e.key==='Enter')go();});
   window.addEventListener('resize',draw);
   if(window.ResizeObserver) new ResizeObserver(()=>draw()).observe($('wrap'));
-  $('mkCoin').onclick=()=>switchMarket('coin');$('mkStock').onclick=()=>switchMarket('stock');
-  {let m0='coin';try{m0=(typeof location!=='undefined'&&location.hash==='#stock')?'stock':(typeof location!=='undefined'&&location.hash==='#coin')?'coin':(localStorage.getItem('mkt')==='stock'?'stock':'coin');}catch(e){}
-   if(m0==='stock') applyMarket('stock');}
+  $('mkCoin').onclick=()=>switchMarket('coin');$('mkStock').onclick=()=>switchMarket('stock');$('mkFx').onclick=()=>switchMarket('fx');
+  {let m0='coin';try{const h=(typeof location!=='undefined'&&location.hash||'').slice(1);m0=MKT[h]?h:(MKT[localStorage.getItem('mkt')]?localStorage.getItem('mkt'):'coin');}catch(e){}
+   if(m0!=='coin') applyMarket(m0); else {globalThis.__fx=false;globalThis.__fee=MKT.coin.fee;}}
   setInterval(()=>{
     if(document.hidden||!S.cur||S.cur.demo) return;
     if(RT.dirty&&S.tab==='chart'){RT.dirty=false;draw();stamp();}
