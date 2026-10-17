@@ -1,0 +1,16 @@
+{
+  "cooldownHours": 6,
+  "expireHours": 60,
+  "symbols": [
+    { "mk": "coin",   "sym": "BTCUSDT" },
+    { "mk": "coin",   "sym": "ETHUSDT" },
+    { "mk": "coin",   "sym": "SOLUSDT" },
+    { "mk": "coin",   "sym": "BNBUSDT" },
+    { "mk": "stock",  "sym": "TSLAUSDT" },
+    { "mk": "stock",  "sym": "NVDAUSDT" },
+    { "mk": "bstock", "sym": "XAUUSDT" },
+    { "mk": "bstock", "sym": "CLUSDT" },
+    { "mk": "fx",     "sym": "EURUSDUSDT" },
+    { "mk": "fx",     "sym": "USDJPYUSDT" }
+  ]
+}
