@@ -1,0 +1,24 @@
+{
+ "v": {
+  "coin:BTCUSDT": {
+   "txt": "CHỜ",
+   "ready": false,
+   "last": 0
+  },
+  "coin:ETHUSDT": {
+   "txt": "CHỜ",
+   "ready": false,
+   "last": 0
+  },
+  "coin:SOLUSDT": {
+   "txt": "CHỜ",
+   "ready": false,
+   "last": 0
+  },
+  "coin:BNBUSDT": {
+   "txt": "TRÁNH MUA",
+   "ready": false,
+   "last": 0
+  }
+ }
+}
