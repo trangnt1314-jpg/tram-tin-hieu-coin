@@ -1,4 +1,29 @@
 {
- "lastRun": 1792304738111,
- "signals": []
+ "lastRun": 1792323324342,
+ "signals": [
+  {
+   "id": "coin:BTCUSDT:1792323324342",
+   "mk": "coin",
+   "sym": "BTCUSDT",
+   "t": 1792323324342,
+   "from": 1792323000000,
+   "side": "buy",
+   "entry": 82104.03,
+   "sl": 81725.04823470606,
+   "tp": 82861.99353058786,
+   "risk": 378.9817652939321,
+   "rr": 2,
+   "fee": 0.002,
+   "verdict": "MUA",
+   "score": 34,
+   "dirs": {
+    "1d": "buy",
+    "4h": "wait",
+    "1h": "buy",
+    "15m": "buy"
+   },
+   "status": "open",
+   "R": null
+  }
+ ]
 }
