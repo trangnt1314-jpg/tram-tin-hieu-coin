@@ -13,13 +13,13 @@
    "side": "sell"
   },
   "coin:SOLUSDT": {
-   "txt": "TRÁNH MUA",
+   "txt": "CHỜ",
    "ready": false,
    "last": 0,
    "side": "sell"
   },
   "coin:BNBUSDT": {
-   "txt": "TRÁNH MUA",
+   "txt": "CHỜ",
    "ready": false,
    "last": 0,
    "side": "sell"
