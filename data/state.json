@@ -1,8 +1,8 @@
 {
  "v": {
   "coin:BTCUSDT": {
-   "txt": "MUA",
-   "ready": true,
+   "txt": "CHỜ",
+   "ready": false,
    "last": 1792323324342
   },
   "coin:ETHUSDT": {
