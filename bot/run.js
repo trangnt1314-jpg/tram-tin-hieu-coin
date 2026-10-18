@@ -72,6 +72,16 @@ async function klines(mk, sym, tf, limit = 1000) {
   return kParse(M, await hostsTry(M, kPath(M, sym, tf, limit)), tf);
 }
 
+/* ---------- danh sách coin lớn nhất theo khối lượng (tự quét) ---------- */
+async function topCoins(n) {
+  const all = await hostsTry(MK.coin, '/api/v3/ticker/24hr');
+  const stable = /^(USDC|FDUSD|TUSD|USDP|DAI|BUSD|EUR|AEUR|USD1|USDE|XUSD|PAXG|WBTC|WBETH)$/;
+  return all.filter(t => t.symbol.endsWith('USDT'))
+    .map(t => ({ sym: t.symbol, base: t.symbol.slice(0, -4), vol: +t.quoteVolume }))
+    .filter(t => !stable.test(t.base) && !/(UP|DOWN|BULL|BEAR)$/.test(t.base) && t.vol > 0)
+    .sort((a, b) => b.vol - a.vol).slice(0, n).map(t => t.sym);
+}
+
 /* ---------- đánh giá một mã ---------- */
 async function evaluate(E, mk, sym, now) {
   const M = MK[mk];
@@ -126,6 +136,8 @@ async function tg(text) {
 
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return d; } };
 const baseOf = sym => sym.replace(/USDT$/, '');
+const fmtTime = ms => new Date(ms).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+const agoTxt = ms => { const m = Math.max(0, Math.round(ms / 60000)); if (m < 60) return m + ' phút'; const h = Math.floor(m / 60), r = m % 60; return h + ' giờ' + (r ? ' ' + r + ' phút' : ''); };
 const arrow = d => d === 'buy' ? '▲' : d === 'sell' ? '▼' : '–';
 
 async function main() {
@@ -153,26 +165,59 @@ async function main() {
     } catch (e) { bad++; lastErr = e.message; console.error('Cập nhật lệnh lỗi', s.sym, e.message); }
   }
 
-  // 2) kiểm tra tín hiệu mới
-  for (const it of cfg.symbols || []) {
+  // 2) kiểm tra tín hiệu mới (danh sách cố định + coin lớn nhất nếu bật autoTop)
+  const symbols = (cfg.symbols || []).slice();
+  if (cfg.autoTop > 0) {
+    try {
+      const have = new Set(symbols.filter(x => x.mk === 'coin').map(x => x.sym));
+      for (const sym of await topCoins(cfg.autoTop)) if (!have.has(sym)) symbols.push({ mk: 'coin', sym });
+    } catch (e) { console.error('Không lấy được danh sách coin lớn:', e.message); }
+  }
+  for (const it of symbols) {
     if (!MK[it.mk]) { console.error('Thị trường không hợp lệ:', it.mk); continue; }
     const key = it.mk + ':' + it.sym;
     try {
       const r = await evaluate(E, it.mk, it.sym, now);
       ok++;
-      const v = r.v, ready = v.side === 'buy' && /^MUA( MẠNH)?$/.test(v.txt);
+      const v = r.v, ready = v.side === 'buy' && (cfg.onlyStrong ? v.txt === 'MUA MẠNH' : /^MUA( MẠNH)?$/.test(v.txt));
       const prev = state.v[key], M = MK[it.mk];
       let last = prev ? prev.last || 0 : 0;
       if (prev && ready && !prev.ready && now - last >= cool) {
-        const e1 = r.A['1h'], atr = e1.ind.atr[e1.n - 1], c15 = r.C['15m'] || r.C['1h'], lc = c15[c15.length - 1];
-        if (Number.isFinite(atr) && atr > 0) {
-          const entry = lc.c, risk = SLATR * atr, sl = entry - risk, tp = entry + RR * risk;
-          const dirs = {}; M.tfs.forEach(tf => { dirs[tf] = r.R[tf].dir; });
-          log.signals.push({ id: key + ':' + now, mk: it.mk, sym: it.sym, t: now, from: lc.ct + 1, side: 'buy', entry, sl, tp, risk, rr: RR, fee: M.fee,
-            verdict: v.txt, score: Math.round(v.score * 100), dirs, status: 'open', R: null });
-          last = now;
-          const sc = Math.round(v.score * 100);
-          msgs.push(`🟢 ${v.txt} ${baseOf(it.sym)} (${M.name})\nGiá hiện tại: ${E.fmt(entry)}\nCắt lỗ: ${E.fmt(sl)} (−${(risk / entry * 100).toFixed(2)}%)\nChốt lời: ${E.fmt(tp)} (+${(RR * risk / entry * 100).toFixed(2)}%, lãi/lỗ 1:${RR})\nKhung: ${M.tfs.map(tf => tf + ' ' + arrow(r.R[tf].dir)).join(' · ')}, điểm ${sc > 0 ? '+' : ''}${sc}\nKết luận chốt theo nến đã đóng, giá có thể đã chạy xa. Hãy kiểm tra lại giá và tự tính khối lượng theo mức rủi ro của bạn trước khi vào lệnh. Chỉ là công cụ phân tích, không phải lời khuyên đầu tư.`);
+        const ents = {}; M.tfs.forEach(tf => { ents[tf] = { C: r.C[tf], A: r.A[tf] }; });
+        const a = E.mtfAnchor(M.tfs, ents, 192, true);
+        const c15 = r.C['15m'], P = c15[c15.length - 1].c;
+        if (a) {
+          const q = E.sigStatus(a, P), sc = Math.round(v.score * 100);
+          if (q.st === 'sl' || q.st === 'tp' || q.st === 'chase') {
+            console.log('Bỏ qua tín hiệu đã trễ/hết hiệu lực', key, q.txt);   // không gửi, không ghi: bạn không thể vào kịp
+          } else {
+            const dirs = {}; M.tfs.forEach(tf => { dirs[tf] = r.R[tf].dir; });
+            const t0 = a.ct + 1;
+            log.signals.push({ id: key + ':' + t0, mk: it.mk, sym: it.sym, t: t0, from: t0, side: 'buy', entry: a.E0, sl: a.sl, tp: a.tp, risk: a.risk, rr: RR, fee: M.fee,
+              verdict: v.txt, score: sc, dirs, status: 'open', R: null });
+            last = now;
+            const pc = (P - a.E0) / a.E0 * 100;
+            msgs.push([
+              `🟢 ${v.txt} ${baseOf(it.sym)} (${M.name})`,
+              `Tín hiệu hình thành lúc ${fmtTime(t0)} (cách đây ${agoTxt(now - t0)}), tính trên nến 15m vừa đóng.`,
+              `Giá lúc đó: ${E.fmt(a.E0)} · giá hiện tại: ${E.fmt(P)} (${q.m >= 0 ? '+' : ''}${q.m.toFixed(2)}R, ${pc >= 0 ? '+' : ''}${pc.toFixed(2)}%)`,
+              `Trạng thái: ${q.txt}`,
+              `Vùng vào hợp lệ: đến ${E.fmt(q.maxEntry)}. Trên ${E.fmt(q.noChase)} thì bỏ qua, đừng đuổi giá.`,
+              `Cắt lỗ: ${E.fmt(a.sl)} (−${(a.risk / a.E0 * 100).toFixed(2)}%)`,
+              `Chốt lời: ${E.fmt(a.tp)} (+${(RR * a.risk / a.E0 * 100).toFixed(2)}%), lãi/lỗ còn lại 1:${q.rrLeft.toFixed(2)}`,
+              `Khung: ${M.tfs.map(tf => tf + ' ' + arrow(r.R[tf].dir)).join(' · ')}, điểm ${sc > 0 ? '+' : ''}${sc}`,
+              `Kết luận chốt theo nến đã đóng. Hãy kiểm tra lại giá hiện tại và tự tính khối lượng theo mức rủi ro của bạn trước khi vào lệnh. Chỉ là công cụ phân tích, không phải lời khuyên đầu tư.`,
+            ].join('\n'));
+          }
+        }
+      }
+      // điều kiện mua không còn: báo cho người chưa vào lệnh biết nên bỏ qua
+      if (prev && prev.ready && !ready) {
+        for (const s2 of log.signals) {
+          if (s2.status === 'open' && s2.mk === it.mk && s2.sym === it.sym && !s2.lost) {
+            s2.lost = now;
+            msgs.push(`⚠️ ${baseOf(it.sym)} (${M.name}): điều kiện mua không còn (kết luận hiện tại: ${v.txt}). Nếu bạn chưa vào lệnh từ tín hiệu lúc ${fmtTime(s2.t)} thì nên bỏ qua. Hệ thống vẫn theo dõi tín hiệu này đến khi chạm chốt lời, cắt lỗ hoặc hết hạn.`);
+          }
         }
       }
       state.v[key] = { txt: v.txt, ready, last };
@@ -185,7 +230,11 @@ async function main() {
     msgs.push(`⚠️ Bot không tải được dữ liệu từ sàn (${lastErr}). Nếu chạy trên GitHub Actions, có thể sàn chặn địa chỉ máy chủ của GitHub. Xem README-bot.md để chạy bot trên máy hoặc máy chủ khác.`);
   }
 
-  for (const m of msgs) await tg(m);
+  const cap = cfg.maxMsgPerRun || 10;
+  const send = msgs.length > cap
+    ? msgs.slice(0, cap - 1).concat([`… và ${msgs.length - cap + 1} tin khác trong lần quét này. Xem đầy đủ ở tab "Kết quả thật" trong app.`])
+    : msgs;
+  for (const m of send) { await tg(m); if (send.length > 1) await new Promise(r => setTimeout(r, 400)); }
 
   // 4) lưu dữ liệu (chỉ ghi khi có thay đổi để tránh tạo commit liên tục)
   if (log.signals.length > 500) {
