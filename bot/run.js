@@ -7,6 +7,8 @@
  *   ghi data/signals.json (để tab "Kết quả thật" đọc) và data/state.json.
  * - Cần Node 18 trở lên. Không cần cài thêm thư viện.
  * Biến môi trường: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (không bắt buộc, thiếu thì chỉ ghi dữ liệu).
+ * Chế độ: trong config.json đặt "mode": "futures" để bot báo cả LONG và SHORT (có lọc MA5/MA10 cắt nhau trên 15m).
+ *          Bỏ trống hoặc "spot" thì giữ như cũ, chỉ báo điểm MUA.
  * Công cụ phân tích, không phải lời khuyên đầu tư.
  */
 const fs = require('fs'), path = require('path'), vm = require('vm');
@@ -83,7 +85,7 @@ async function topCoins(n) {
 }
 
 /* ---------- đánh giá một mã ---------- */
-async function evaluate(E, mk, sym, now) {
+async function evaluate(E, mk, sym, now, fut) {
   const M = MK[mk];
   E.setFee(M.fee);
   const raw = await Promise.all(M.tfs.map(tf => klines(mk, sym, tf)));
@@ -94,23 +96,25 @@ async function evaluate(E, mk, sym, now) {
     if (cs.length < M.minRaw) throw new Error('ít dữ liệu khung ' + tf);
     C[tf] = cs; A[tf] = E.analyze(cs);
     const fc = A[tf].fc;
-    R[tf] = { dir: fc.dir, pct: fc.pct, norm: fc.bias / fc.max };
+    R[tf] = { dir: fc.dir, pct: fc.pct, norm: fc.bias / fc.max, ma: fc.ma };
   });
-  return { v: E.mtfVerdict(R), R, C, A };
+  return { v: E.mtfVerdict(R, false, fut), R, C, A };
 }
 
 /* ---------- kết quả tín hiệu đang mở ---------- */
 function fin(s, status, price, ts) {
+  const sg = s.side === 'sell' ? -1 : 1;
   s.status = status; s.exit = price; s.closedAt = ts;
-  s.R = (price - s.entry) / s.risk - s.entry * s.fee / s.risk;
+  s.R = sg * (price - s.entry) / s.risk - s.entry * s.fee / s.risk;
   return true;
 }
 async function updateOpen(s, now, expireMs) {
   const cs = await klines(s.mk, s.sym, '15m', 1000);         // gồm cả nến đang chạy
   for (const c of cs) {
     if (c.t < s.from) continue;
-    if (c.l <= s.sl) return fin(s, 'loss', s.sl, Math.min(c.ct, now));     // chạm cả hai mức trong một nến thì tính thua
-    if (c.h >= s.tp) return fin(s, 'win', s.tp, Math.min(c.ct, now));
+    const short = s.side === 'sell';
+    if (short ? c.h >= s.sl : c.l <= s.sl) return fin(s, 'loss', s.sl, Math.min(c.ct, now));     // chạm cả hai mức trong một nến thì tính thua
+    if (short ? c.l <= s.tp : c.h >= s.tp) return fin(s, 'win', s.tp, Math.min(c.ct, now));
   }
   if (now - s.t >= expireMs) {
     const closed = cs.filter(c => c.ct <= now);
@@ -151,6 +155,8 @@ async function main() {
   const before = JSON.stringify(log.signals) + JSON.stringify(state);
   const now = Date.now(), cool = (cfg.cooldownHours || 6) * 36e5, expire = (cfg.expireHours || 60) * 36e5;
   const msgs = [];
+  const fut = cfg.mode === 'futures';
+  const lbl = sd => fut ? (sd === 'buy' ? 'LONG' : 'SHORT') : 'MUA';
   let ok = 0, bad = 0, lastErr = '';
 
   // 1) cập nhật tín hiệu đang mở
@@ -177,14 +183,15 @@ async function main() {
     if (!MK[it.mk]) { console.error('Thị trường không hợp lệ:', it.mk); continue; }
     const key = it.mk + ':' + it.sym;
     try {
-      const r = await evaluate(E, it.mk, it.sym, now);
+      const r = await evaluate(E, it.mk, it.sym, now, fut);
       ok++;
-      const v = r.v, ready = v.side === 'buy' && (cfg.onlyStrong ? v.txt === 'MUA MẠNH' : /^MUA( MẠNH)?$/.test(v.txt));
+      const v = r.v, side = v.side === 'sell' ? 'sell' : 'buy';
+      const ready = E.mtfReady(v, fut) && (!cfg.onlyStrong || /MẠNH$/.test(v.txt));
       const prev = state.v[key], M = MK[it.mk];
       let last = prev ? prev.last || 0 : 0;
-      if (prev && ready && !prev.ready && now - last >= cool) {
+      if (prev && ready && (!prev.ready || (prev.side && prev.side !== side)) && now - last >= cool) {
         const ents = {}; M.tfs.forEach(tf => { ents[tf] = { C: r.C[tf], A: r.A[tf] }; });
-        const a = E.mtfAnchor(M.tfs, ents, 192, true);
+        const a = E.mtfAnchor(M.tfs, ents, 192, true, side, fut);
         const c15 = r.C['15m'], P = c15[c15.length - 1].c;
         if (a) {
           const q = E.sigStatus(a, P), sc = Math.round(v.score * 100);
@@ -193,34 +200,36 @@ async function main() {
           } else {
             const dirs = {}; M.tfs.forEach(tf => { dirs[tf] = r.R[tf].dir; });
             const t0 = a.ct + 1;
-            log.signals.push({ id: key + ':' + t0, mk: it.mk, sym: it.sym, t: t0, from: t0, side: 'buy', entry: a.E0, sl: a.sl, tp: a.tp, risk: a.risk, rr: RR, fee: M.fee,
+            log.signals.push({ id: key + ':' + t0, mk: it.mk, sym: it.sym, t: t0, from: t0, side, entry: a.E0, sl: a.sl, tp: a.tp, risk: a.risk, rr: RR, fee: M.fee,
               verdict: v.txt, score: sc, dirs, status: 'open', R: null });
             last = now;
-            const pc = (P - a.E0) / a.E0 * 100;
+            const sgn0 = side === 'sell' ? -1 : 1, pc = sgn0 * (P - a.E0) / a.E0 * 100;
             msgs.push([
-              `🟢 ${v.txt} ${baseOf(it.sym)} (${M.name})`,
+              `${side === 'sell' ? '🔴' : '🟢'} ${v.txt} ${baseOf(it.sym)} (${M.name})`,
               `Tín hiệu hình thành lúc ${fmtTime(t0)} (cách đây ${agoTxt(now - t0)}), tính trên nến 15m vừa đóng.`,
               `Giá lúc đó: ${E.fmt(a.E0)} · giá hiện tại: ${E.fmt(P)} (${q.m >= 0 ? '+' : ''}${q.m.toFixed(2)}R, ${pc >= 0 ? '+' : ''}${pc.toFixed(2)}%)`,
               `Trạng thái: ${q.txt}`,
-              `Vùng vào hợp lệ: đến ${E.fmt(q.maxEntry)}. Trên ${E.fmt(q.noChase)} thì bỏ qua, đừng đuổi giá.`,
+              side === 'sell'
+                ? `Vùng vào hợp lệ: từ ${E.fmt(q.maxEntry)} trở lên. Dưới ${E.fmt(q.noChase)} thì bỏ qua, đừng đuổi giá.`
+                : `Vùng vào hợp lệ: đến ${E.fmt(q.maxEntry)}. Trên ${E.fmt(q.noChase)} thì bỏ qua, đừng đuổi giá.`,
               `Cắt lỗ: ${E.fmt(a.sl)} (−${(a.risk / a.E0 * 100).toFixed(2)}%)`,
               `Chốt lời: ${E.fmt(a.tp)} (+${(RR * a.risk / a.E0 * 100).toFixed(2)}%), lãi/lỗ còn lại 1:${q.rrLeft.toFixed(2)}`,
-              `Khung: ${M.tfs.map(tf => tf + ' ' + arrow(r.R[tf].dir)).join(' · ')}, điểm ${sc > 0 ? '+' : ''}${sc}`,
-              `Kết luận chốt theo nến đã đóng. Hãy kiểm tra lại giá hiện tại và tự tính khối lượng theo mức rủi ro của bạn trước khi vào lệnh. Chỉ là công cụ phân tích, không phải lời khuyên đầu tư.`,
+              `Khung: ${M.tfs.map(tf => tf + ' ' + arrow(r.R[tf].dir) + (fut && r.R[tf].ma ? (r.R[tf].ma > 0 ? ' MA▲' : ' MA▼') : '')).join(' · ')}, điểm ${sc > 0 ? '+' : ''}${sc}`,
+              `Kết luận chốt theo nến đã đóng. Hãy kiểm tra lại giá hiện tại và tự tính khối lượng theo mức rủi ro của bạn trước khi vào lệnh.${fut ? ' Futures có phí funding và rủi ro thanh lý, hãy tính khoảng cách tới giá thanh lý trước khi chọn đòn bẩy.' : ''} Chỉ là công cụ phân tích, không phải lời khuyên đầu tư.`,
             ].join('\n'));
           }
         }
       }
       // điều kiện mua không còn: báo cho người chưa vào lệnh biết nên bỏ qua
-      if (prev && prev.ready && !ready) {
+      if (prev && prev.ready && (!ready || (prev.side && prev.side !== side))) {
         for (const s2 of log.signals) {
-          if (s2.status === 'open' && s2.mk === it.mk && s2.sym === it.sym && !s2.lost) {
+          if (s2.status === 'open' && s2.mk === it.mk && s2.sym === it.sym && !s2.lost && (s2.side || 'buy') === (prev.side || 'buy')) {
             s2.lost = now;
-            msgs.push(`⚠️ ${baseOf(it.sym)} (${M.name}): điều kiện mua không còn (kết luận hiện tại: ${v.txt}). Nếu bạn chưa vào lệnh từ tín hiệu lúc ${fmtTime(s2.t)} thì nên bỏ qua. Hệ thống vẫn theo dõi tín hiệu này đến khi chạm chốt lời, cắt lỗ hoặc hết hạn.`);
+            msgs.push(`⚠️ ${baseOf(it.sym)} (${M.name}): điều kiện ${lbl(s2.side || 'buy')} không còn (kết luận hiện tại: ${v.txt}). Nếu bạn chưa vào lệnh từ tín hiệu lúc ${fmtTime(s2.t)} thì nên bỏ qua. Hệ thống vẫn theo dõi tín hiệu này đến khi chạm chốt lời, cắt lỗ hoặc hết hạn.`);
           }
         }
       }
-      state.v[key] = { txt: v.txt, ready, last };
+      state.v[key] = { txt: v.txt, ready, last, side: ready ? side : (prev && prev.side) || side };
     } catch (e) { bad++; lastErr = e.message; console.error('Lỗi', key, e.message); }
   }
 
