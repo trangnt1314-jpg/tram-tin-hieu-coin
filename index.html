@@ -127,6 +127,9 @@ canvas{display:block;width:100%;height:100%}
 .fwd td,.fwd th{padding:6px 5px;border-top:1px dashed var(--line);text-align:right;white-space:nowrap}
 .fwd td:first-child,.fwd th:first-child{text-align:left}
 .fwd .sc{overflow-x:auto}
+.valid{margin:8px 0;padding:10px 12px;border-radius:10px;font-size:14px;line-height:1.55;background:#EEF3F6}
+.valid b{display:block;font-size:15px;margin-bottom:2px}
+.valid.ok{background:var(--buy-bg)} .valid.late{background:#FFF1D6} .valid.bad{background:var(--sell-bg)}
 [hidden]{display:none!important}
 
 @media (max-width:1060px){
@@ -872,7 +875,58 @@ function calcPos(p) {
   return { ok: true, riskAmt, qty, notional, margin, lev, feeAmt, lossAtSL, liq, liqDistPct, distPct, slOk, maxSafeLev, profitAtTP, rr, capped, realRiskPct: lossAtSL / cap * 100 };
 }
 
-if (typeof module !== 'undefined') module.exports = { analyze, genDemo, fmt, sma, ema, rsiW, atrW, calcInd, zigzag, checkImpulse, TYPE_LABEL, mtfVerdict, MTF_W, dirSg, calcPos, calcStats };
+/* ---------- Hiệu lực tín hiệu MUA (dùng chung với bot) ----------
+ * Tín hiệu hình thành ở nến 15m đầu tiên mà kết luận đa khung chuyển sang MUA / MUA MẠNH (điểm vào E0 = giá đóng nến đó).
+ * Cắt lỗ = E0 - 1,5 ATR(1h), chốt lời = E0 + 2 lần rủi ro. Giá hiện tại P cho biết còn vào được hay đã trễ. */
+const SIG_SLATR = 1.5, SIG_RR = 2;
+function sigValidity(E, sl, tp, P) {
+  const r = E - sl, m = (P - E) / r;
+  const rrLeft = P > sl ? (tp - P) / (P - sl) : 0;
+  let st, txt;
+  if (P <= sl) { st = 'sl'; txt = 'Hết hiệu lực: giá đã chạm cắt lỗ'; }
+  else if (P >= tp) { st = 'tp'; txt = 'Hết hiệu lực: giá đã chạm chốt lời'; }
+  else if (m <= 0.3) { st = 'ok'; txt = 'Còn hiệu lực: giá còn gần điểm vào'; }
+  else if (m <= 0.6) { st = 'late'; txt = 'Đã chạy một đoạn: chỉ nên vào khối lượng nhỏ hoặc chờ giá hồi'; }
+  else { st = 'chase'; txt = 'Đã trễ: đừng đuổi giá, chờ giá hồi về vùng vào hoặc chờ tín hiệu mới'; }
+  return { st, txt, m, rrLeft, risk: r, maxEntry: E + 0.3 * r, noChase: E + 0.6 * r };
+}
+function sigStatus(a, P) {
+  const q = sigValidity(a.E0, a.sl, a.tp, P);
+  if (a.touched === 'sl') { q.st = 'sl'; q.txt = 'Hết hiệu lực: giá đã chạm cắt lỗ sau khi tín hiệu hình thành'; }
+  else if (a.touched === 'tp') { q.st = 'tp'; q.txt = 'Hết hiệu lực: giá đã chạm chốt lời sau khi tín hiệu hình thành'; }
+  return q;
+}
+// ents: { tf: { C: nến đã đóng, A: kết quả analyze } }. Trả về null nếu hiện không có tín hiệu MUA đang chạy.
+function mtfAnchor(ord, ents, maxBack, force) {
+  const e15 = ents['15m'], e1 = ents['1h'];
+  if (!e15 || !e1 || !e15.C.length) return null;
+  const C15 = e15.C, n15 = C15.length;
+  const idxAt = (C, ct) => { let lo = 0, hi = C.length - 1, r = -1; while (lo <= hi) { const mid = (lo + hi) >> 1; if (C[mid].ct <= ct) { r = mid; lo = mid + 1; } else hi = mid - 1; } return r; };
+  const readyAt = j => {
+    const ct = C15[j].ct, R = {};
+    for (const tf of ord) {
+      const e = ents[tf]; if (!e) return false;
+      const ix = tf === '15m' ? j : idxAt(e.C, ct);
+      if (ix < 30) return false;
+      const f = e.A.fcAt(ix);
+      R[tf] = { dir: f.dir, pct: f.pct, norm: f.norm };
+    }
+    const v = mtfVerdict(R);
+    return v.side === 'buy' && /^MUA( MẠNH)?$/.test(v.txt);
+  };
+  let j = n15 - 1;
+  const lim = Math.max(0, n15 - 1 - (maxBack || 192));
+  if (readyAt(j)) { while (j > lim && readyAt(j - 1)) j--; }
+  else if (!force) return null;
+  const ct = C15[j].ct, ix1 = idxAt(e1.C, ct), atr = e1.A.ind.atr[ix1];
+  if (!(atr > 0)) return null;
+  const E0 = C15[j].c, risk = SIG_SLATR * atr, sl = E0 - risk, tp = E0 + SIG_RR * risk;
+  let touched = null;
+  for (let k = j + 1; k < n15; k++) { if (C15[k].l <= sl) { touched = 'sl'; break; } if (C15[k].h >= tp) { touched = 'tp'; break; } }
+  return { E0, sl, tp, risk, ct, bars: n15 - 1 - j, capped: j === lim && lim > 0, touched };
+}
+
+if (typeof module !== 'undefined') module.exports = { analyze, genDemo, fmt, sma, ema, rsiW, atrW, calcInd, zigzag, checkImpulse, TYPE_LABEL, mtfVerdict, MTF_W, dirSg, calcPos, calcStats, sigValidity, sigStatus, mtfAnchor, SIG_SLATR, SIG_RR };
 
 </script>
 <script>
@@ -1314,8 +1368,8 @@ const nf=(x,d=2)=>isFinite(x)?x.toLocaleString('vi-VN',{minimumFractionDigits:d,
 const MK_NAME={coin:'Coin',stock:'Cổ phiếu',bstock:'Bybit TradFi',fx:'Forex'};
 function calcDefaults(){
   const L=S.lv;if(!L||!isFinite(L.px)||!isFinite(L.atr)) return null;
-  const risk=1.5*L.atr;
-  return {buy:{entry:L.px,sl:L.px-risk,tp:L.px+2*risk},sell:{entry:L.px,sl:L.px+risk,tp:L.px-2*risk}};
+  const risk=1.5*L.atr,X=S.anchor,useA=X&&X.sym===S.sym&&X.ready&&X.a&&!X.a.touched&&L.px>X.a.sl&&L.px<X.a.tp;
+  return {buy:{entry:L.px,sl:useA?X.a.sl:L.px-risk,tp:useA?X.a.tp:L.px+2*risk},sell:{entry:L.px,sl:L.px+risk,tp:L.px-2*risk}};
 }
 function calcState(){
   const L=S.lv,d=calcDefaults();if(!L||!d) return null;
@@ -1341,6 +1395,36 @@ function calcRecalc(){
   lines.push(`<span class="mut">Ước tính ký quỹ cô lập, tỉ lệ ký quỹ duy trì giả định 0,5%, chưa tính funding. Luôn đối chiếu bằng máy tính của sàn trước khi vào lệnh.</span>`);
   out.innerHTML=lines.join('<br>');
 }
+const agoTxt=ms=>{const m=Math.max(0,Math.round(ms/60000));if(m<60) return m+' phút';const h=Math.floor(m/60),r=m%60;return h+' giờ'+(r?' '+r+' phút':'');};
+function curPx(){
+  const sym=S.sym,e=S.cache.get(sym+'|15m');
+  let px=NaN,best=0;
+  for(const tf of Object.keys(TFS)){const l=S.live[sym+'|'+tf];if(l&&l.t>best){best=l.t;px=l.c;}}
+  if(isFinite(px)) return px;
+  if(e&&e.C.length) return e.C[e.C.length-1].c;
+  return NaN;
+}
+function paintValid(){
+  const el=$('mtfValid');if(!el) return;
+  const X=S.anchor;if(!X||X.sym!==S.sym){el.innerHTML='';return;}
+  if(!X.ready||!X.a){
+    el.innerHTML='<div class="valid"><b>Hiện chưa có tín hiệu MUA hợp lệ để vào lệnh.</b>Khi đủ điều kiện, mục này sẽ hiện giờ tín hiệu hình thành, điểm vào, và cho biết giá hiện tại còn vào được hay đã trễ.</div>';return;
+  }
+  const a=X.a,P=curPx();
+  if(!isFinite(P)){el.innerHTML='';return;}
+  if(S.lv&&S.lv.sym===S.sym) S.lv.px=P;
+  const q=sigStatus(a,P),age=Date.now()-(a.ct+1);
+  const cls=q.st==='ok'?'ok':q.st==='late'?'late':'bad';
+  const tm=new Date(a.ct+1).toLocaleString('vi-VN',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'});
+  const pc=(P-a.E0)/a.E0*100,sgn=x=>(x>=0?'+':'')+x;
+  const dead=q.st==='sl'||q.st==='tp';
+  el.innerHTML=`<div class="valid ${cls}"><b>${q.txt}</b>
+    Tín hiệu hình thành lúc <b style="display:inline">${tm}</b> (cách đây ${agoTxt(age)}), tính trên nến 15m vừa đóng.<br>
+    Giá lúc đó <b style="display:inline">${fmt(a.E0)}</b>, giá hiện tại <b style="display:inline">${fmt(P)}</b> (${sgn(q.m.toFixed(2))}R, ${sgn(pc.toFixed(2))}%).<br>
+    ${dead?'':`Vùng vào hợp lệ: đến <b style="display:inline">${fmt(q.maxEntry)}</b>. Trên <b style="display:inline">${fmt(q.noChase)}</b> thì bỏ qua, đừng đuổi giá.<br>`}
+    Cắt lỗ <b style="display:inline">${fmt(a.sl)}</b> (−${(a.risk/a.E0*100).toFixed(2)}%) · Chốt lời <b style="display:inline">${fmt(a.tp)}</b>${dead?'':` · lãi/lỗ còn lại 1:${q.rrLeft.toFixed(2)}`}
+    ${age>6*36e5&&!dead?'<br>Tín hiệu này đã kéo dài hơn 6 giờ. Nếu chưa vào lệnh thì chỉ nên vào khi giá hồi về vùng hợp lệ.':''}</div>`;
+}
 function renderCalc(){
   const host=$('calc');if(!host) return;
   const st=calcState();
@@ -1357,7 +1441,7 @@ function renderCalc(){
       <div><label>Chốt lời</label><input type="number" step="any" inputmode="decimal" data-k="tp" value="${pv(st.tp)}"></div>
     </div>
     <div class="out" id="calcOut"></div>
-    <p class="note">Giá vào, cắt lỗ, chốt lời được điền sẵn theo giá hiện tại và ATR khung 1h (cắt lỗ 1,5 ATR, chốt lời 2 lần mức rủi ro). Bạn có thể sửa tay.</p>
+    <p class="note">Giá vào là giá hiện tại. Cắt lỗ và chốt lời lấy theo tín hiệu gốc khi đang có tín hiệu MUA còn hiệu lực, nếu không thì tính theo ATR khung 1h (cắt lỗ 1,5 ATR, chốt lời 2 lần mức rủi ro). Giá đã chạy xa khỏi điểm vào thì khoảng cách cắt lỗ lớn hơn và khối lượng tự giảm. Bạn có thể sửa tay.</p>
   </details>`;
   host.querySelector('details').addEventListener('input',e=>{
     const k=e.target.dataset&&e.target.dataset.k;if(!k) return;
@@ -1419,22 +1503,19 @@ async function renderMTF(){
     const r=R[tf],mark=want?(r.dir===want?'<span class="ok">✓</span>':'<span class="no">✗</span>'):'';
     return `<tr><td>${tf}</td><td class="mut">${MTF_ROLE[tf]}</td><td><span class="pill ${r.dir==='buy'?'buy':r.dir==='sell'?'sell':'wait'}">${dirTxt(r.dir)}</span></td><td class="r">${r.pct}/100 ${mark}</td></tr>`;
   }).join('');
-  let lv='';
-  const f1=R['1h'].ent.A.fc;
-  if(want==='buy'&&f1.dir==='buy'&&f1.sl){
-    lv=`<div class="lv"><span>Vùng vào (theo 1h)</span><span>${fmt(f1.zoneLo)}–${fmt(f1.zoneHi)}</span><span></span>
-      <span>Mục tiêu</span><span class="up">${fmt(f1.tp1)}</span><span>R:R 1:${f1.rr}</span>
-      <span>Cắt lỗ</span><span class="dn">${fmt(f1.sl)}</span><span>${f1.slPct.toFixed(2)}%</span></div>`;
-  }
+  const isReady=v.side==='buy'&&/^MUA( MẠNH)?$/.test(v.txt);
+  let anchor=null;
+  if(isReady){const em={};ord.forEach((tf,i)=>{em[tf]=ents[i];});try{anchor=mtfAnchor(ord,em,192,true);}catch(e){anchor=null;}}
+  S.anchor={sym,ready:isReady,a:anchor};
   box.innerHTML=`<div class="card ticket mtf ${v.cls==='wait'?'':v.cls}">
     <h3>Kết luận đa khung ${sym.replace('USDT','')}</h3>
     <div class="big ${v.cls==='buy'?'up':v.cls==='sell'?'dn':''}">${v.txt}</div>
     <p style="font-size:14px;margin:4px 0">${v.why}</p>
     <div id="mtfLive"></div>
     <div class="kv" style="margin-top:6px"><span class="mut">Điểm đa khung (−100 đến +100)</span><b>${v.score>0?'+':''}${Math.round(v.score*100)}</b></div>
-    ${lv}
+    <div id="mtfValid"></div>
     <table>${rows}</table>
-    <p class="note">Quy tắc: 1 ngày và 4h quyết định hướng, 1h xác nhận, 15m chọn điểm vào. Hai khung lớn ngược nhau thì luôn là CHỜ. Tính trên nến đã đóng; chỉ là xác suất, luôn đặt cắt lỗ.${S.mkt==='bstock'?' Đây là hợp đồng vĩnh viễn TradFi của Bybit (cổ phiếu, vàng, bạc, dầu…): giá tổng hợp, giao dịch 24/7, có phí funding, có thể lệch giá thật ngoài giờ giao dịch của thị trường gốc. Với dầu thô, giá bám hợp đồng tương lai nên có thể có bước nhảy khi chuyển kỳ hạn. Nếu dùng đòn bẩy, hãy tính khoảng cách tới giá thanh lý trước khi đặt cắt lỗ.':''}${S.mkt==='fx'?' Đây là giá hợp đồng vĩnh viễn forex trên Bybit (tổng hợp, giao dịch 24/7, có phí funding), có thể lệch giá forex thật, nhất là cuối tuần. Hợp đồng mới ra mắt 8/9/2026 nên chưa có khung 1 ngày, kết luận dựa trên 4h, 1h và 15m. Đòn bẩy cao dễ chạm giá thanh lý, hãy tính trước khoảng cách này.':''}${S.mkt==='stock'?' Đây là giá hợp đồng vĩnh viễn trên Binance Futures: giao dịch 24/7, có phí funding mỗi 8 giờ và có thể lệch giá cổ phiếu thật ngoài giờ Mỹ. Nếu dùng đòn bẩy, hãy tính khoảng cách tới giá thanh lý trước khi đặt cắt lỗ.':''}${demo?' Đang dùng dữ liệu mô phỏng nên kết luận này chưa có giá trị.':''}</p>
+    <p class="note">Quy tắc: 1 ngày và 4h quyết định hướng, 1h xác nhận, 15m chọn điểm vào. Điểm vào là giá đóng nến 15m đầu tiên đủ điều kiện, giá hiện tại cho biết còn vào được hay đã trễ. Hai khung lớn ngược nhau thì luôn là CHỜ. Tính trên nến đã đóng; chỉ là xác suất, luôn đặt cắt lỗ.${S.mkt==='bstock'?' Đây là hợp đồng vĩnh viễn TradFi của Bybit (cổ phiếu, vàng, bạc, dầu…): giá tổng hợp, giao dịch 24/7, có phí funding, có thể lệch giá thật ngoài giờ giao dịch của thị trường gốc. Với dầu thô, giá bám hợp đồng tương lai nên có thể có bước nhảy khi chuyển kỳ hạn. Nếu dùng đòn bẩy, hãy tính khoảng cách tới giá thanh lý trước khi đặt cắt lỗ.':''}${S.mkt==='fx'?' Đây là giá hợp đồng vĩnh viễn forex trên Bybit (tổng hợp, giao dịch 24/7, có phí funding), có thể lệch giá forex thật, nhất là cuối tuần. Hợp đồng mới ra mắt 8/9/2026 nên chưa có khung 1 ngày, kết luận dựa trên 4h, 1h và 15m. Đòn bẩy cao dễ chạm giá thanh lý, hãy tính trước khoảng cách này.':''}${S.mkt==='stock'?' Đây là giá hợp đồng vĩnh viễn trên Binance Futures: giao dịch 24/7, có phí funding mỗi 8 giờ và có thể lệch giá cổ phiếu thật ngoài giờ Mỹ. Nếu dùng đòn bẩy, hãy tính khoảng cách tới giá thanh lý trước khi đặt cắt lỗ.':''}${demo?' Đang dùng dữ liệu mô phỏng nên kết luận này chưa có giá trị.':''}</p>
     <button class="go" id="mtfBtBtn" style="width:100%;margin-top:10px">${S.mtfBt&&!S.mtfBt.err?'Chạy lại backtest đa khung':'Chạy backtest đa khung (6 coin lớn, ~4 tháng)'}</button>
     <div id="mtfBt"></div>
   </div>`;
@@ -1442,7 +1523,7 @@ async function renderMTF(){
   renderMtfBt();
   {const e1=R['1h'].ent,e15=R['15m']?R['15m'].ent:e1,lc=e15.C[e15.C.length-1],lv15=S.live[sym+'|15m'];
    S.lv={sym,side:v.side==='sell'?'sell':'buy',px:lv15&&lv15.t>lc.t?lv15.c:lc.c,atr:e1.A.ind.atr[e1.A.n-1]};}
-  renderCalc();
+  paintValid();renderCalc();
   S.mtfClosed={sym,v};alertChange(sym,v);paintLive();provMTF();
   if('Notification' in window&&Notification.permission==='default'){const nb=document.createElement('button');nb.className='chip sm';nb.style.marginTop='8px';nb.textContent='Bật thông báo trình duyệt khi đổi kết luận';nb.onclick=()=>{try{Notification.requestPermission().then(()=>nb.remove());}catch(e){}};box.firstElementChild.appendChild(nb);}
 }
@@ -1944,7 +2025,7 @@ function init(){
    if(m0!=='coin') applyMarket(m0); else {globalThis.__fx=false;globalThis.__fee=MKT.coin.fee;}}
   setInterval(()=>{
     if(document.hidden||!S.cur||S.cur.demo) return;
-    if(RT.dirty&&S.tab==='chart'){RT.dirty=false;draw();stamp();}
+    if(RT.dirty&&S.tab==='chart'){RT.dirty=false;draw();stamp();paintValid();}
     if(Date.now()-RT.provAt>8000&&(RT.ok||RT.poll)){RT.provAt=Date.now();provMTF();}
   },500);
   document.addEventListener('visibilitychange',()=>{
@@ -1953,7 +2034,7 @@ function init(){
   loadTop(25);
   showChart();
 }
-window.__app={S,V,draw,load,runScan,showChart,renderAside,renderScan,tap};
+window.__app={paintValid,S,V,draw,load,runScan,showChart,renderAside,renderScan,tap};
 init();
 })();
 </script>
