@@ -1,8 +1,8 @@
 {
  "v": {
   "coin:BTCUSDT": {
-   "txt": "MUA MẠNH",
-   "ready": true,
+   "txt": "CHỜ",
+   "ready": false,
    "last": 1792369931051,
    "side": "buy"
   },
