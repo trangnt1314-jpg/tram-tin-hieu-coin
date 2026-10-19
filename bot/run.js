@@ -9,6 +9,7 @@
  * Biến môi trường: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (không bắt buộc, thiếu thì chỉ ghi dữ liệu).
  * Chế độ: trong config.json đặt "mode": "futures" để bot báo cả LONG và SHORT (có lọc MA5/MA10 cắt nhau trên 15m).
  *          Bỏ trống hoặc "spot" thì giữ như cũ, chỉ báo điểm MUA.
+ * Bộ lọc bổ trợ VWAP / phân kỳ RSI-MACD / Order Block / FVG mặc định bật; tắt từng cái bằng "filters": {"vwap":0,"div":0,"ob":0,"fvg":0} trong config.json.
  * Công cụ phân tích, không phải lời khuyên đầu tư.
  */
 const fs = require('fs'), path = require('path'), vm = require('vm');
@@ -39,6 +40,8 @@ function loadEngine() {
   const E = sb.module.exports;
   if (!E.analyze || !E.mtfVerdict) throw new Error('index.html thiếu hàm phân tích, hãy dùng bản index.html mới nhất');
   E.setFee = f => vm.runInContext('globalThis.__fee=' + f, sb);
+  E.setRR = (rr, m) => vm.runInContext('globalThis.__rrT=' + rr + ';globalThis.__minRR=' + m, sb);
+  E.setFilters = f => vm.runInContext('globalThis.__ft=' + JSON.stringify(f), sb);
   return E;
 }
 
@@ -147,6 +150,7 @@ const arrow = d => d === 'buy' ? '▲' : d === 'sell' ? '▼' : '–';
 async function main() {
   const E = loadEngine();
   const cfg = JSON.parse(fs.readFileSync(CFG, 'utf8'));
+  E.setFilters(Object.assign({ vwap: 1, div: 1, ob: 1, fvg: 1 }, cfg.filters || {}));   // bộ lọc bổ trợ, tắt bằng "filters": {"ob": 0} trong config.json
   fs.mkdirSync(DATA, { recursive: true });
   const sigFile = path.join(DATA, 'signals.json'), stFile = path.join(DATA, 'state.json');
   const log = readJSON(sigFile, { lastRun: 0, signals: [] }), state = readJSON(stFile, { v: {} });
@@ -156,6 +160,8 @@ async function main() {
   const now = Date.now(), cool = (cfg.cooldownHours || 6) * 36e5, expire = (cfg.expireHours || 60) * 36e5;
   const msgs = [];
   const fut = cfg.mode === 'futures';
+  const RRv = +cfg.rr || 2;                                   // chốt lời theo R (config.json: "rr": 2)
+  E.setRR(RRv, +cfg.minRR || 1.5);                            // R:R còn lại tối thiểu để chấp nhận vào lệnh ("minRR")
   const lbl = sd => fut ? (sd === 'buy' ? 'LONG' : 'SHORT') : 'MUA';
   let ok = 0, bad = 0, lastErr = '';
 
@@ -200,7 +206,7 @@ async function main() {
           } else {
             const dirs = {}; M.tfs.forEach(tf => { dirs[tf] = r.R[tf].dir; });
             const t0 = a.ct + 1;
-            log.signals.push({ id: key + ':' + t0, mk: it.mk, sym: it.sym, t: t0, from: t0, side, entry: a.E0, sl: a.sl, tp: a.tp, risk: a.risk, rr: RR, fee: M.fee,
+            log.signals.push({ id: key + ':' + t0, mk: it.mk, sym: it.sym, t: t0, from: t0, side, entry: a.E0, sl: a.sl, tp: a.tp, risk: a.risk, rr: RRv, fee: M.fee,
               verdict: v.txt, score: sc, dirs, status: 'open', R: null });
             last = now;
             const sgn0 = side === 'sell' ? -1 : 1, pc = sgn0 * (P - a.E0) / a.E0 * 100;
@@ -210,10 +216,10 @@ async function main() {
               `Giá lúc đó: ${E.fmt(a.E0)} · giá hiện tại: ${E.fmt(P)} (${q.m >= 0 ? '+' : ''}${q.m.toFixed(2)}R, ${pc >= 0 ? '+' : ''}${pc.toFixed(2)}%)`,
               `Trạng thái: ${q.txt}`,
               side === 'sell'
-                ? `Vùng vào hợp lệ: từ ${E.fmt(q.maxEntry)} trở lên. Dưới ${E.fmt(q.noChase)} thì bỏ qua, đừng đuổi giá.`
-                : `Vùng vào hợp lệ: đến ${E.fmt(q.maxEntry)}. Trên ${E.fmt(q.noChase)} thì bỏ qua, đừng đuổi giá.`,
+                ? `Vùng vào hợp lệ: từ ${E.fmt(q.maxEntry)} trở lên (R:R còn lại ≥ 1:${q.need}). Dưới ${E.fmt(q.noChase)} (R:R còn lại dưới 1:1) thì bỏ qua, đừng đuổi giá.`
+                : `Vùng vào hợp lệ: đến ${E.fmt(q.maxEntry)} (R:R còn lại ≥ 1:${q.need}). Trên ${E.fmt(q.noChase)} (R:R còn lại dưới 1:1) thì bỏ qua, đừng đuổi giá.`,
               `Cắt lỗ: ${E.fmt(a.sl)} (−${(a.risk / a.E0 * 100).toFixed(2)}%)`,
-              `Chốt lời: ${E.fmt(a.tp)} (+${(RR * a.risk / a.E0 * 100).toFixed(2)}%), lãi/lỗ còn lại 1:${q.rrLeft.toFixed(2)}`,
+              `Chốt lời: ${E.fmt(a.tp)} (+${(RRv * a.risk / a.E0 * 100).toFixed(2)}%), lãi/lỗ còn lại 1:${q.rrLeft.toFixed(2)}`,
               `Khung: ${M.tfs.map(tf => tf + ' ' + arrow(r.R[tf].dir) + (fut && r.R[tf].ma ? (r.R[tf].ma > 0 ? ' MA▲' : ' MA▼') : '')).join(' · ')}, điểm ${sc > 0 ? '+' : ''}${sc}`,
               `Kết luận chốt theo nến đã đóng. Hãy kiểm tra lại giá hiện tại và tự tính khối lượng theo mức rủi ro của bạn trước khi vào lệnh.${fut ? ' Futures có phí funding và rủi ro thanh lý, hãy tính khoảng cách tới giá thanh lý trước khi chọn đòn bẩy.' : ''} Chỉ là công cụ phân tích, không phải lời khuyên đầu tư.`,
             ].join('\n'));
