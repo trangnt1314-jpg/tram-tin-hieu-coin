@@ -169,6 +169,7 @@ canvas{display:block;width:100%;height:100%}
 <div class="banner" id="banner" hidden><b>Đang dùng dữ liệu mô phỏng, chưa phải giá thật.</b> Không kết nối được Binance từ nơi đang mở file<span id="errWhy"></span>. Hãy mở file qua đường link trên trình duyệt Chrome hoặc Safari (xem hướng dẫn), không mở trong khung xem trước của ứng dụng chat. <button class="chip sm" id="retry" style="margin-left:6px">Thử kết nối lại</button></div>
 
 <main>
+  <div class="bar" id="setBar"></div>
   <!-- BIỂU ĐỒ -->
   <section id="viewChart">
     <div class="bar">
@@ -179,6 +180,7 @@ canvas{display:block;width:100%;height:100%}
       <span id="tfChart"></span>
     </div>
     <div class="bar" id="layers"></div>
+    <div class="bar" id="ftBar"></div>
     <div class="grid">
       <div class="chartWrap" id="wrap">
         <canvas id="cv"></canvas>
@@ -191,12 +193,8 @@ canvas{display:block;width:100%;height:100%}
   <!-- BỘ LỌC -->
   <section id="viewScan" hidden>
     <div class="bar">
-      <span id="tfScan"></span>
-      <span class="sep"></span>
-      <button class="chip" data-f="all" aria-pressed="true">Tất cả</button>
-      <button class="chip" data-f="buy" aria-pressed="false">Dự báo tăng</button>
-      <button class="chip" data-f="sell" aria-pressed="false">Dự báo giảm</button>
-      <button class="chip" id="onlyPos" aria-pressed="false">Chỉ coin backtest dương</button>
+      <span id="tfScan" hidden></span>
+      <span class="mut" id="scanInfo" style="font-size:13px"></span>
       <span class="grow"></span>
       <button class="go" id="rescan">Quét lại</button>
     </div>
@@ -210,7 +208,7 @@ canvas{display:block;width:100%;height:100%}
     <div id="fwdBody"></div>
   </section>
 
-  <p class="foot">Công cụ hỗ trợ phân tích, không phải lời khuyên đầu tư. Dự báo gom từ MACD, KDJ, StochRSI, Bollinger, Ichimoku, Fibonacci, vùng giá, Elliott, volume và xu hướng EMA; đây là kịch bản ước tính cho các nến sắp tới, chưa xảy ra. Tín hiệu chỉ là xác suất, không có chỉ báo nào dự báo chắc chắn. Backtest giả định khớp lệnh tại giá đóng cửa nến tín hiệu, phí giả định theo từng thị trường (coin 0,1% mỗi chiều, cổ phiếu 0,05%, Bybit TradFi 0,06%, forex 0,03%), nếu cùng một nến chạm cả cắt lỗ và chốt lời thì tính là thua.</p>
+  <p class="foot">Công cụ hỗ trợ phân tích, không phải lời khuyên đầu tư. Dự báo gom từ MACD, StochRSI, MA5/MA10, VWAP, phân kỳ RSI/MACD, Order Block, FVG, Bollinger, Ichimoku, Fibonacci, vùng giá, volume và xu hướng EMA; đây là kịch bản ước tính cho các nến sắp tới, chưa xảy ra. Tín hiệu chỉ là xác suất, không có chỉ báo nào dự báo chắc chắn. Backtest giả định khớp lệnh tại giá đóng cửa nến tín hiệu, phí giả định theo từng thị trường (coin 0,1% mỗi chiều, cổ phiếu 0,05%, Bybit TradFi 0,06%, forex 0,03%), nếu cùng một nến chạm cả cắt lỗ và chốt lời thì tính là thua.</p>
 </main>
 
 <script>
@@ -516,12 +514,147 @@ function calcStats(trades) {
   return { n, wr: wins / n, exp: cum / n, pf: gl > 0 ? gw / gl : (gw > 0 ? Infinity : 0), dd, total: cum };
 }
 
+/* ---------- Bộ lọc bổ trợ (bật/tắt qua globalThis.__ft): VWAP, phân kỳ RSI/MACD, Order Block, FVG ----------
+   Mọi tín hiệu chỉ dùng nến đã đóng tại thời điểm đó: phân kỳ chờ đủ 3 nến xác nhận đỉnh/đáy, OB và FVG chỉ xét sau khi hình thành. */
+function zonePass(n, o, h, l, c, ind, create, type, pts, txtFn, add, vArr, list) {
+  const act = [];
+  for (let i = 1; i < n; i++) {
+    const atr = ind.atr[i];
+    for (const z of act) {
+      if (z.dead) continue;
+      const buy = z.side === 'buy';
+      if (i - z.i0 > 150) { z.dead = true; z.end = z.end == null ? i : z.end; continue; }
+      if (buy ? c[i] < z.lo : c[i] > z.hi) { z.dead = true; z.end = i; continue; }
+      if (!z.touched && i > z.i0 && (buy ? l[i] <= z.hi : h[i] >= z.lo)) {
+        z.touched = true; z.end = i;
+        const hold = buy ? (c[i] > z.mid && c[i] > o[i]) : (c[i] < z.mid && c[i] < o[i]);
+        if (hold && isN(atr)) add(i, z.side, type, pts, txtFn(z));
+      }
+    }
+    if (isN(atr)) for (const z of create(i, atr)) {
+      if (act.some(a => a.k === z.k && a.side === z.side)) continue;
+      z.i0 = i; z.touched = false; z.dead = false; z.end = null; z.mid = (z.lo + z.hi) / 2;
+      act.push(z); list.push(z);
+    }
+    let b = 0;
+    for (const z of act) {
+      if (z.dead || (z.touched && z.end !== i)) continue;
+      if (z.side === 'buy' && l[i] <= z.hi && c[i] >= z.lo) b += 1;
+      else if (z.side === 'sell' && h[i] >= z.lo && c[i] <= z.hi) b -= 1;
+    }
+    vArr[i] = b > 0 ? 1 : b < 0 ? -1 : 0;
+  }
+}
+
+function extras(C, o, h, l, c, v, ind, FT, add) {
+  const n = C.length, X = { on: FT, vwap: NaNs(n), obs: [], fvgs: [], divs: [], divAt: new Array(n).fill(null), obV: new Array(n).fill(0), fvgV: new Array(n).fill(0) };
+  const F = x => x.toFixed(0);
+
+  // VWAP: khung 15m/1h reset mỗi ngày UTC, khung 4h/1d reset mỗi tuần
+  if (FT.vwap && n > 3) {
+    const step = C[1].t - C[0].t, weekly = step >= 144e5;
+    let key = null, pv = 0, vv = 0, cnt = 0;
+    for (let i = 0; i < n; i++) {
+      const k = weekly ? Math.floor((C[i].t - 4 * 864e5) / (7 * 864e5)) : Math.floor(C[i].t / 864e5);
+      if (k !== key) { key = k; pv = 0; vv = 0; cnt = 0; }
+      pv += (h[i] + l[i] + c[i]) / 3 * v[i]; vv += v[i]; cnt++;
+      if (vv > 0 && cnt >= 3) X.vwap[i] = pv / vv;
+    }
+    for (let i = 4; i < n; i++) {
+      const w = X.vwap[i], pw = X.vwap[i - 1], atr = ind.atr[i];
+      if (!isN(w) || !isN(pw) || !isN(atr)) continue;
+      const above3 = [1, 2, 3].every(k => isN(X.vwap[i - k]) && c[i - k] > X.vwap[i - k]);
+      const below3 = [1, 2, 3].every(k => isN(X.vwap[i - k]) && c[i - k] < X.vwap[i - k]);
+      if (c[i - 1] <= pw && c[i] > w && c[i] > o[i]) add(i, 'buy', 'vwap', 1.0, `Giá đóng cửa vượt lên trên VWAP (${fmt(w)}): phe mua giành lại giá vốn trung bình có trọng số volume`);
+      else if (c[i - 1] >= pw && c[i] < w && c[i] < o[i]) add(i, 'sell', 'vwap', 1.0, `Giá đóng cửa rơi xuống dưới VWAP (${fmt(w)}): phe bán chiếm lại giá vốn trung bình có trọng số volume`);
+      else if (above3 && l[i] <= w + 0.1 * atr && c[i] > w && c[i] > o[i]) add(i, 'buy', 'vwap', 1.2, `Giá hồi về chạm VWAP (${fmt(w)}) từ phía trên rồi bật lên bằng nến xanh: VWAP đang làm hỗ trợ`);
+      else if (below3 && h[i] >= w - 0.1 * atr && c[i] < w && c[i] < o[i]) add(i, 'sell', 'vwap', 1.2, `Giá hồi lên chạm VWAP (${fmt(w)}) từ phía dưới rồi bị đẩy xuống bằng nến đỏ: VWAP đang làm kháng cự`);
+    }
+  }
+
+  // Phân kỳ RSI / MACD (đỉnh đáy fractal 3 nến, xác nhận sau 3 nến)
+  if (FT.div) {
+    const K = 3, lo = [], hi = [];
+    for (let i = 2 * K; i < n; i++) {
+      const j = i - K;
+      let isL = true, isH = true;
+      for (let k = 1; k <= K; k++) {
+        if (!(l[j] < l[j - k]) || !(l[j] <= l[j + k])) isL = false;
+        if (!(h[j] > h[j - k]) || !(h[j] >= h[j + k])) isH = false;
+      }
+      if (isL) {
+        const p = lo[lo.length - 1];
+        if (p !== undefined && j - p >= 5 && j - p <= 60 && l[j] < l[p]) {
+          const r = isN(ind.rsi[j]) && isN(ind.rsi[p]) && ind.rsi[j] > ind.rsi[p] && ind.rsi[p] < 50;
+          const m = isN(ind.macd[j]) && isN(ind.macd[p]) && ind.macd[j] > ind.macd[p] && ind.macd[p] < 0;
+          if (r || m) {
+            const pts = r && m ? 1.8 : 1.2;
+            add(i, 'buy', 'div', pts, `Phân kỳ tăng ${r && m ? 'RSI và MACD' : r ? 'RSI' : 'MACD'}: giá tạo đáy thấp hơn (${fmt(l[p])} → ${fmt(l[j])}) nhưng ${r ? `RSI đáy cao hơn (${F(ind.rsi[p])} → ${F(ind.rsi[j])})` : ''}${r && m ? ' và ' : ''}${m ? 'MACD đáy cao hơn' : ''}: lực bán yếu dần, nguy cơ đảo chiều lên`);
+            X.divs.push({ side: 'buy', j1: p, j2: j, p1: l[p], p2: l[j], i, rsi: r, macd: m }); X.divAt[i] = { side: 'buy', pts };
+          }
+        }
+        lo.push(j);
+      }
+      if (isH) {
+        const p = hi[hi.length - 1];
+        if (p !== undefined && j - p >= 5 && j - p <= 60 && h[j] > h[p]) {
+          const r = isN(ind.rsi[j]) && isN(ind.rsi[p]) && ind.rsi[j] < ind.rsi[p] && ind.rsi[p] > 50;
+          const m = isN(ind.macd[j]) && isN(ind.macd[p]) && ind.macd[j] < ind.macd[p] && ind.macd[p] > 0;
+          if (r || m) {
+            const pts = r && m ? 1.8 : 1.2;
+            add(i, 'sell', 'div', pts, `Phân kỳ giảm ${r && m ? 'RSI và MACD' : r ? 'RSI' : 'MACD'}: giá tạo đỉnh cao hơn (${fmt(h[p])} → ${fmt(h[j])}) nhưng ${r ? `RSI đỉnh thấp hơn (${F(ind.rsi[p])} → ${F(ind.rsi[j])})` : ''}${r && m ? ' và ' : ''}${m ? 'MACD đỉnh thấp hơn' : ''}: lực mua yếu dần, nguy cơ đảo chiều xuống`);
+            X.divs.push({ side: 'sell', j1: p, j2: j, p1: h[p], p2: h[j], i, rsi: r, macd: m }); X.divAt[i] = { side: 'sell', pts };
+          }
+        }
+        hi.push(j);
+      }
+    }
+  }
+
+  // Order Block: nến ngược chiều cuối cùng trước cú đẩy mạnh phá cấu trúc (thân nến > 1,5 ATR, vượt đỉnh/đáy 10 nến)
+  if (FT.ob) {
+    const create = (i, atr) => {
+      const out = [];
+      if (i < 12) return out;
+      let mx = -Infinity, mn = Infinity;
+      for (let j = i - 10; j < i; j++) { if (h[j] > mx) mx = h[j]; if (l[j] < mn) mn = l[j]; }
+      if (c[i] - o[i] > 1.5 * atr && c[i] > mx) {
+        for (let k = i - 1; k >= i - 6; k--) if (c[k] < o[k]) { if (h[k] - l[k] <= 3 * atr) out.push({ side: 'buy', lo: l[k], hi: h[k], k }); break; }
+      } else if (o[i] - c[i] > 1.5 * atr && c[i] < mn) {
+        for (let k = i - 1; k >= i - 6; k--) if (c[k] > o[k]) { if (h[k] - l[k] <= 3 * atr) out.push({ side: 'sell', lo: l[k], hi: h[k], k }); break; }
+      }
+      return out;
+    };
+    zonePass(n, o, h, l, c, ind, create, 'ob', 1.5, z => z.side === 'buy'
+      ? `Order Block tăng ${fmt(z.lo)}–${fmt(z.hi)}: giá quay lại vùng nến giảm cuối cùng trước cú đẩy lên mạnh (lần chạm đầu tiên) rồi bật lên bằng nến xanh: lực mua lớn còn bảo vệ vùng này`
+      : `Order Block giảm ${fmt(z.lo)}–${fmt(z.hi)}: giá quay lại vùng nến tăng cuối cùng trước cú đạp xuống mạnh (lần chạm đầu tiên) rồi bị đẩy xuống bằng nến đỏ: lực bán lớn còn bảo vệ vùng này`,
+      add, X.obV, X.obs);
+  }
+
+  // Fair Value Gap: khoảng trống giá do 3 nến, nến giữa là nến đẩy mạnh
+  if (FT.fvg) {
+    const create = (i, atr) => {
+      const out = [];
+      if (i < 2) return out;
+      if (l[i] > h[i - 2] && c[i - 1] > o[i - 1] && c[i - 1] - o[i - 1] >= 0.8 * atr && l[i] - h[i - 2] >= 0.5 * atr) out.push({ side: 'buy', lo: h[i - 2], hi: l[i], k: i });
+      else if (h[i] < l[i - 2] && c[i - 1] < o[i - 1] && o[i - 1] - c[i - 1] >= 0.8 * atr && l[i - 2] - h[i] >= 0.5 * atr) out.push({ side: 'sell', lo: h[i], hi: l[i - 2], k: i });
+      return out;
+    };
+    zonePass(n, o, h, l, c, ind, create, 'fvg', 1.2, z => z.side === 'buy'
+      ? `FVG tăng ${fmt(z.lo)}–${fmt(z.hi)}: giá quay lại lấp khoảng trống chưa được khớp (lần chạm đầu tiên) và giữ được bằng nến xanh: vùng mất cân bằng cung cầu đang đỡ giá`
+      : `FVG giảm ${fmt(z.lo)}–${fmt(z.hi)}: giá quay lại lấp khoảng trống chưa được khớp (lần chạm đầu tiên) và bị từ chối bằng nến đỏ: vùng mất cân bằng cung cầu đang chặn giá`,
+      add, X.fvgV, X.fvgs);
+  }
+  return X;
+}
+
 /* ---------- Phân tích chính ---------- */
-const TYPE_LABEL = { macd: 'MACD', kdj: 'KDJ', srsi: 'StochRSI', sr: 'Vùng giá', ma: 'MA 5/10', bb: 'Bollinger', ew: 'Elliott', vol: 'Volume', trend: 'Xu hướng', ichi: 'Ichimoku', fib: 'Fibonacci' };
+const TYPE_LABEL = { macd: 'MACD', kdj: 'KDJ', srsi: 'StochRSI', sr: 'Vùng giá', ma: 'MA 5/10', vwap: 'VWAP', div: 'Phân kỳ', ob: 'Order Block', fvg: 'FVG', bb: 'Bollinger', ew: 'Elliott', vol: 'Volume', trend: 'Xu hướng', ichi: 'Ichimoku', fib: 'Fibonacci' };
 
 function analyze(C, opts) {
   opts = opts || {};
-  const RR = opts.rr || 2, SLATR = opts.slAtr || 1.5, MAXB = opts.maxBars || 60;
+  const FT = Object.assign({}, globalThis.__ft || {}, opts.ft || {});
+  const RR = opts.rr || +globalThis.__rrT || 2, SLATR = opts.slAtr || 1.5, MAXB = opts.maxBars || 60;
   const n = C.length;
   const o = C.map(x => x.o), h = C.map(x => x.h), l = C.map(x => x.l), c = C.map(x => x.c), v = C.map(x => x.v);
   const ind = calcInd(o, h, l, c, v);
@@ -533,7 +666,7 @@ function analyze(C, opts) {
   const add = (i, side, type, pts, txt, confirm) => trig[i].push({ side, type, pts, txt, confirm: !!confirm });
   const F0 = x => x.toFixed(0), F1 = x => x.toFixed(1);
 
-  for (const e of ew) if (e.i < n) add(e.i, e.side, 'ew', e.kind === 'w5' ? 1.5 : 1.2, e.text);
+  const X = extras(C, o, h, l, c, v, ind, FT, add);
 
   const START = 40;
   for (let i = START; i < n; i++) {
@@ -550,23 +683,6 @@ function analyze(C, opts) {
         add(i, 'sell', 'macd', above ? 1.5 : 1.0, above
           ? 'MACD cắt xuống đường tín hiệu khi còn trên vạch 0: đà tăng đang cạn, động lượng quay đầu giảm'
           : 'MACD cắt xuống đường tín hiệu và nằm dưới vạch 0: động lượng giảm được củng cố');
-      }
-    }
-    // KDJ
-    if (isN(ind.K[i - 1]) && isN(ind.D[i - 1])) {
-      const K = ind.K[i], D = ind.D[i], J = ind.J[i];
-      if (ind.K[i - 1] <= ind.D[i - 1] && K > D) {
-        const pts = K < 30 ? 1.2 : K < 50 ? 0.6 : 0.3;
-        add(i, 'buy', 'kdj', pts, `KDJ: K (${F0(K)}) cắt lên D (${F0(D)}) ` +
-          (K < 30 ? 'trong vùng quá bán (<30), tín hiệu đảo chiều tăng đáng tin hơn' :
-           K < 50 ? 'ở nửa dưới, đà tăng mới hình thành' : 'ở vùng cao, chỉ là tín hiệu yếu') +
-          (J < 10 ? `; J chạm vùng cực thấp (${F0(J)})` : ''));
-      } else if (ind.K[i - 1] >= ind.D[i - 1] && K < D) {
-        const pts = K > 70 ? 1.2 : K > 50 ? 0.6 : 0.3;
-        add(i, 'sell', 'kdj', pts, `KDJ: K (${F0(K)}) cắt xuống D (${F0(D)}) ` +
-          (K > 70 ? 'trong vùng quá mua (>70), tín hiệu đảo chiều giảm đáng tin hơn' :
-           K > 50 ? 'ở nửa trên, đà giảm mới hình thành' : 'ở vùng thấp, chỉ là tín hiệu yếu') +
-          (J > 90 ? `; J chạm vùng cực cao (${F0(J)})` : ''));
       }
     }
     // Stochastic RSI
@@ -791,8 +907,6 @@ function analyze(C, opts) {
     }
     const hh = ind.hist[i], hp = ind.hist[i - 1];
     if (isN(hh) && isN(hp)) vote('macd', (hh > 0 ? 0.5 : -0.5) + (hh > hp ? 0.5 : -0.5), `Histogram MACD ${hh > 0 ? 'dương' : 'âm'} và ${hh > hp ? 'đang tăng dần' : 'đang giảm dần'}: động lượng ${(hh > 0) === (hh > hp) ? 'đang được củng cố' : 'đang suy yếu'}`);
-    const K = ind.K[i], D = ind.D[i];
-    if (isN(K) && isN(D)) vote('kdj', (K > D ? 0.5 : -0.5) + (K < 20 ? 0.5 : K > 80 ? -0.5 : 0), `KDJ: K ${F0(K)} ${K > D ? 'trên' : 'dưới'} D ${F0(D)}` + (K < 20 ? ', vùng quá bán, dễ hồi' : K > 80 ? ', vùng quá mua, dễ điều chỉnh' : ''));
     const sk = ind.sk[i], sd = ind.sd[i];
     if (isN(sk) && isN(sd)) vote('srsi', (sk > sd ? 0.5 : -0.5) + (sk < 20 ? 0.5 : sk > 80 ? -0.5 : 0), `StochRSI: %K ${F0(sk)} ${sk > sd ? 'trên' : 'dưới'} %D ${F0(sd)}` + (sk < 20 ? ', vùng quá bán, dễ hồi' : sk > 80 ? ', vùng quá mua, dễ điều chỉnh' : ''));
     const bm = ind.bbMid[i], bu = ind.bbUp[i], bl = ind.bbLo[i];
@@ -814,13 +928,17 @@ function analyze(C, opts) {
           `MA5 ${m5 > m10 ? 'trên' : 'dưới'} MA10 (${fmt(m5)} / ${fmt(m10)}), giá ${c[i] > m10 ? 'trên' : 'dưới'} MA10, MA10 đang ${sl10 ? 'dốc lên' : 'dốc xuống'}`);
       }
     }
+    if (FT.vwap && isN(X.vwap[i])) vote('vwap', c[i] > X.vwap[i] ? 0.6 : -0.6, `Giá ${c[i] > X.vwap[i] ? 'trên' : 'dưới'} VWAP (${fmt(X.vwap[i])}): ${c[i] > X.vwap[i] ? 'phe mua đang kiểm soát giá vốn trung bình' : 'phe bán đang kiểm soát giá vốn trung bình'}`);
+    if (FT.div) for (let k = 0; k <= 8 && i - k >= 0; k++) { const d = X.divAt[i - k]; if (d) { vote('div', d.side === 'buy' ? 1 : -1, `Có phân kỳ ${d.side === 'buy' ? 'tăng' : 'giảm'} RSI/MACD xuất hiện ${k === 0 ? 'ở nến vừa đóng' : 'cách ' + k + ' nến'}`); break; } }
+    if (FT.ob && X.obV[i] !== 0) vote('ob', X.obV[i] * 0.7, `Giá đang nằm trong Order Block ${X.obV[i] > 0 ? 'tăng (vùng cầu)' : 'giảm (vùng cung)'} chưa bị lấp`);
+    if (FT.fvg && X.fvgV[i] !== 0) vote('fvg', X.fvgV[i] * 0.7, `Giá đang nằm trong FVG ${X.fvgV[i] > 0 ? 'tăng' : 'giảm'} chưa bị lấp`);
     const tr = trendAt(i);
     vote('trend', tr, tr > 0 ? 'EMA50 trên EMA200 và giá trên EMA50: xu hướng chính tăng' : tr < 0 ? 'EMA50 dưới EMA200 và giá dưới EMA50: xu hướng chính giảm' : 'EMA50/EMA200 chưa cho xu hướng chính rõ ràng');
   }
   return votes;
   };
   const votes = votesAt(n - 1, fsNow);
-  const MAXV = { ichi: 1, macd: 1, kdj: 1, srsi: 1, bb: 0.5, fib: 1, trend: 1, ma: 1 };
+  const MAXV = { ichi: 1, macd: 1, kdj: 1, srsi: 1, bb: 0.5, fib: 1, trend: 1, ma: 1, vwap: 0.6, div: 1, ob: 0.7, fvg: 0.7 };
   const bias = votes.reduce((a, x) => a + x.v, 0), maxB = votes.reduce((a, x) => a + MAXV[x.type], 0) || 1;
   const dir = bias >= 0.25 * maxB ? 'buy' : bias <= -0.25 * maxB ? 'sell' : 'wait';
   const pct = Math.round(Math.min(100, Math.abs(bias) / maxB * 100));
@@ -836,12 +954,12 @@ function analyze(C, opts) {
     const sg = dir === 'buy' ? 1 : -1, risk = SLATR * atrN, e = c[n - 1];
     fc.entry = e; fc.zoneLo = e - 0.3 * atrN; fc.zoneHi = e + 0.3 * atrN;
     fc.sl = e - sg * risk; fc.tp1 = e + sg * RR * risk; fc.rr = RR; fc.slPct = risk / e * 100;
-    fc.tp2 = e + sg * 3 * risk; fc.tp2Src = 'R:R 1:3';
+    const r2 = Math.max(3, RR + 1); fc.tp2 = e + sg * r2 * risk; fc.tp2Src = 'R:R 1:' + r2;
     if (fsNow && fsNow.up === (dir === 'buy')) { const x = fsNow.ex(1.618); if (sg * (x - fc.tp1) > 0) { fc.tp2 = x; fc.tp2Src = 'Fib mở rộng 161,8%'; } }
   } else if (dir !== 'wait') fc.dir = 'wait';
 
   const fcAt = i => { const vs = votesAt(i, fibSwing(zz.piv, i, ind.atr[i])); const b = vs.reduce((a, x) => a + x.v, 0), m = vs.reduce((a, x) => a + MAXV[x.type], 0) || 1, nr = b / m; return { dir: nr >= 0.25 ? 'buy' : nr <= -0.25 ? 'sell' : 'wait', norm: nr, pct: Math.round(Math.min(100, Math.abs(nr) * 100)), ma: maSt(i) }; };
-  return { C, ind, signals, stats, now, zonesNow, zz, ew, ewLast, n, fc, fib: fsNow, fcAt };
+  return { C, ind, signals, stats, now, zonesNow, zz, ew, ewLast, n, fc, fib: fsNow, fcAt, ext: X };
 }
 
 /* ---------- Dữ liệu mô phỏng khi không gọi được Binance ---------- */
@@ -927,17 +1045,21 @@ function calcPos(p) {
  * Tín hiệu hình thành ở nến 15m đầu tiên mà kết luận đa khung chuyển sang MUA / MUA MẠNH (điểm vào E0 = giá đóng nến đó).
  * Cắt lỗ = E0 - 1,5 ATR(1h), chốt lời = E0 + 2 lần rủi ro. Giá hiện tại P cho biết còn vào được hay đã trễ. */
 const SIG_SLATR = 1.5, SIG_RR = 2;
-function sigValidity(E, sl, tp, P, side) {
+function sigValidity(E, sl, tp, P, side, minRR) {
   const sg = side === 'sell' ? -1 : 1;
   const r = sg * (E - sl), m = sg * (P - E) / r;
+  const rrT = sg * (tp - E) / r;                                        // R:R lúc tín hiệu hình thành
+  const need = Math.min(minRR || +globalThis.__minRR || 1.5, rrT);      // R:R còn lại tối thiểu để chấp nhận vào lệnh
   const rrLeft = sg * (P - sl) > 0 ? sg * (tp - P) / (sg * (P - sl)) : 0;
+  const lim = k => (tp + k * sl) / (1 + k);                             // giá vào để R:R còn lại đúng bằng k (giữ nguyên cắt lỗ và chốt lời)
+  const limitPx = lim(need), noChase = lim(1);
   let st, txt;
   if (sg * (P - sl) <= 0) { st = 'sl'; txt = 'Hết hiệu lực: giá đã chạm cắt lỗ'; }
   else if (sg * (P - tp) >= 0) { st = 'tp'; txt = 'Hết hiệu lực: giá đã chạm chốt lời'; }
-  else if (m <= 0.3) { st = 'ok'; txt = 'Còn hiệu lực: giá còn gần điểm vào'; }
-  else if (m <= 0.6) { st = 'late'; txt = 'Đã chạy một đoạn: chỉ nên vào khối lượng nhỏ hoặc chờ giá hồi'; }
-  else { st = 'chase'; txt = 'Đã trễ: đừng đuổi giá, chờ giá hồi về vùng vào hoặc chờ tín hiệu mới'; }
-  return { st, txt, m, rrLeft, risk: r, maxEntry: E + sg * 0.3 * r, noChase: E + sg * 0.6 * r, side: sg > 0 ? 'buy' : 'sell' };
+  else if (rrLeft >= need - 1e-9) { st = 'ok'; txt = `Còn hiệu lực: R:R còn lại 1:${rrLeft.toFixed(2)}, đạt mức tối thiểu 1:${need}`; }
+  else if (rrLeft >= 1) { st = 'late'; txt = `Giá đã chạy ${m.toFixed(2)}R: R:R còn lại chỉ 1:${rrLeft.toFixed(2)}, thấp hơn mức tối thiểu 1:${need}. Đặt lệnh chờ quanh ${fmt(limitPx)} thay vì vào ngay`; }
+  else { st = 'chase'; txt = 'Đã trễ: R:R còn lại dưới 1:1, đừng đuổi giá; chờ giá hồi về vùng đặt chờ hoặc chờ tín hiệu mới'; }
+  return { st, txt, m, rrLeft, risk: r, maxEntry: limitPx, noChase, limitPx, need, rrT, side: sg > 0 ? 'buy' : 'sell' };
 }
 function sigStatus(a, P) {
   const q = sigValidity(a.E0, a.sl, a.tp, P, a.side);
@@ -972,13 +1094,13 @@ function mtfAnchor(ord, ents, maxBack, force, side, fut) {
   else if (!force) return null;
   const ct = C15[j].ct, ix1 = idxAt(e1.C, ct), atr = e1.A.ind.atr[ix1];
   if (!(atr > 0)) return null;
-  const E0 = C15[j].c, risk = SIG_SLATR * atr, sl = E0 - sg * risk, tp = E0 + sg * SIG_RR * risk;
+  const rrT = +globalThis.__rrT || SIG_RR, E0 = C15[j].c, risk = SIG_SLATR * atr, sl = E0 - sg * risk, tp = E0 + sg * rrT * risk;
   let touched = null;
   for (let k = j + 1; k < n15; k++) {
     if (sg > 0 ? C15[k].l <= sl : C15[k].h >= sl) { touched = 'sl'; break; }
     if (sg > 0 ? C15[k].h >= tp : C15[k].l <= tp) { touched = 'tp'; break; }
   }
-  return { E0, sl, tp, risk, ct, side, bars: n15 - 1 - j, capped: j === lim && lim > 0, touched };
+  return { E0, sl, tp, risk, rr: rrT, ct, side, bars: n15 - 1 - j, capped: j === lim && lim > 0, touched };
 }
 
 if (typeof module !== 'undefined') module.exports = { analyze, genDemo, fmt, sma, ema, rsiW, atrW, calcInd, zigzag, checkImpulse, TYPE_LABEL, mtfVerdict, mtfReady, MTF_W, dirSg, calcPos, calcStats, sigValidity, sigStatus, mtfAnchor, SIG_SLATR, SIG_RR };
@@ -989,9 +1111,9 @@ if (typeof module !== 'undefined') module.exports = { analyze, genDemo, fmt, sma
 'use strict';
 const $=id=>document.getElementById(id);
 const TFS={'15m':900000,'1h':3600000,'4h':14400000,'1d':86400000};
-const LAYERS=[['fc','Dự báo'],['sig','Tín hiệu quá khứ'],['ma','MA 5/10'],['ichi','Ichimoku'],['fib','Fibonacci'],['zones','Vùng giá'],['bb','Bollinger'],['ew','Elliott'],['ema','EMA 50/200'],['macd','MACD'],['kdj','KDJ'],['srsi','StochRSI']];
+const LAYERS=[['fc','Dự báo'],['sig','Tín hiệu quá khứ'],['ma','MA 5/10'],['ichi','Ichimoku'],['fib','Fibonacci'],['zones','Vùng giá'],['bb','Bollinger'],['ema','EMA 50/200'],['macd','MACD'],['srsi','StochRSI']];
 const COL={buy:'#0E8A6D',sell:'#C93A52',zone:'#C98A0B',wave:'#4B46B8',ink:'#17222D',mut:'#5B6B7A',line:'#DDE4EA',blue:'#2F7DBE',orange:'#D9822B',purple:'#9B3FA0',ema200:'#8A5A9E',ma5:'#E08A00',ma10:'#0E9AB0'};
-const S={tab:'chart',tf:'4h',sym:'BTCUSDT',L:{fc:1,ma:1,ichi:1,fib:1,sig:1,zones:1,bb:1,ew:1,ema:0,macd:1,kdj:1,srsi:1},mode:'spot',caches:{coin:new Map(),stock:new Map(),fx:new Map(),bstock:new Map()},tops:{coin:null,stock:null,fx:null,bstock:null},mkt:'coin',saved:{},scanTok:0,cur:null,selSig:null,selBar:null,
+const S={tab:'chart',tf:'4h',sym:'BTCUSDT',L:{fc:1,ma:1,ichi:1,fib:1,sig:1,zones:1,bb:1,ema:0,macd:1,srsi:1},mode:'spot',ft:{vwap:1,div:1,ob:1,fvg:1},rrT:2,minRR:1.5,scanAt:0,oppKeys:{},caches:{coin:new Map(),stock:new Map(),fx:new Map(),bstock:new Map()},tops:{coin:null,stock:null,fx:null,bstock:null},mkt:'coin',saved:{},scanTok:0,cur:null,selSig:null,selBar:null,
   scan:[],filter:'all',onlyPos:false,scanning:false,scannedTf:null,hits:[],live:{},lastV:{},mtfLive:null,mtfClosed:null};
 Object.defineProperty(S,'cache',{get(){return S.caches[S.mkt];}});
 Object.defineProperty(S,'top',{get(){return S.tops[S.mkt];},set(v){S.tops[S.mkt]=v;}});
@@ -1267,6 +1389,22 @@ function draw(){
       g.fillStyle=a1>0?COL.buy:COL.sell;g.beginPath();g.arc(x(i),py(ind.ma10[i]),3.2,0,7);g.fill();
     }
   }
+  // Bổ trợ: VWAP, Order Block, FVG, phân kỳ
+  {const ex=A.ext;
+   if(ex){
+    if(S.ft.vwap){g.strokeStyle='#6C4AB6';g.lineWidth=1.4;g.setLineDash([5,3]);g.beginPath();let st=false;
+      for(let i=i0;i<=i1;i++){const v=ex.vwap[i];if(!isFinite(v)){st=false;continue;}if(!st){g.moveTo(x(i),py(v));st=true;}else g.lineTo(x(i),py(v));}
+      g.stroke();g.setLineDash([]);}
+    const zr=(z,start,lab)=>{const xa=x(start),xb=z.end!=null?x(z.end):plotW;if(xb<0||xa>plotW) return;
+      const ya=py(z.hi),yb=py(z.lo),w=Math.max(2,xb-xa),hh=Math.max(2,yb-ya),bu=z.side==='buy';
+      g.fillStyle=bu?'rgba(14,138,109,.13)':'rgba(201,58,82,.13)';g.fillRect(xa,ya,w,hh);
+      g.strokeStyle=bu?'rgba(14,138,109,.55)':'rgba(201,58,82,.55)';g.lineWidth=1;g.strokeRect(xa,ya,w,hh);
+      g.fillStyle=COL.mut;g.font='11px sans-serif';g.fillText(lab,Math.max(xa+2,2),ya-2);g.font='12px "Be Vietnam Pro",system-ui,sans-serif';};
+    if(S.ft.ob) for(const z of ex.obs) zr(z,z.k,'OB');
+    if(S.ft.fvg) for(const z of ex.fvgs) zr(z,z.i0-2,'FVG');
+    if(S.ft.div) for(const d of ex.divs){if(d.i<i0||d.j1>i1) continue;
+      g.strokeStyle=d.side==='buy'?COL.buy:COL.sell;g.lineWidth=1.6;g.setLineDash([4,3]);g.beginPath();g.moveTo(x(d.j1),py(d.p1));g.lineTo(x(d.j2),py(d.p2));g.stroke();g.setLineDash([]);}
+   }}
   // Elliott
   if(S.L.ew){
     g.strokeStyle='rgba(75,70,184,0.28)';g.lineWidth=1;g.setLineDash([3,4]);g.beginPath();
@@ -1443,7 +1581,7 @@ function calcDefaults(){
   const L=S.lv;if(!L||!isFinite(L.px)||!isFinite(L.atr)) return null;
   const risk=1.5*L.atr,X=S.anchor,A=X&&X.sym===S.sym&&X.ready&&X.a&&!X.a.touched?X.a:null;
   const useB=A&&(A.side||'buy')==='buy'&&L.px>A.sl&&L.px<A.tp, useS=A&&A.side==='sell'&&L.px<A.sl&&L.px>A.tp;
-  return {buy:{entry:L.px,sl:useB?A.sl:L.px-risk,tp:useB?A.tp:L.px+2*risk},sell:{entry:L.px,sl:useS?A.sl:L.px+risk,tp:useS?A.tp:L.px-2*risk}};
+  return {buy:{entry:L.px,sl:useB?A.sl:L.px-risk,tp:useB?A.tp:L.px+S.rrT*risk},sell:{entry:L.px,sl:useS?A.sl:L.px+risk,tp:useS?A.tp:L.px-S.rrT*risk}};
 }
 function calcState(){
   const L=S.lv,d=calcDefaults();if(!L||!d) return null;
@@ -1495,7 +1633,7 @@ function paintValid(){
   el.innerHTML=`<div class="valid ${cls}"><b>${FUT()?(sd>0?'LONG: ':'SHORT: '):''}${q.txt}</b>
     Tín hiệu hình thành lúc <b style="display:inline">${tm}</b> (cách đây ${agoTxt(age)}), tính trên nến 15m vừa đóng.<br>
     Giá lúc đó <b style="display:inline">${fmt(a.E0)}</b>, giá hiện tại <b style="display:inline">${fmt(P)}</b> (${sgn(q.m.toFixed(2))}R, ${sgn(pc.toFixed(2))}%).<br>
-    ${dead?'':(sd>0?`Vùng vào hợp lệ: đến <b style="display:inline">${fmt(q.maxEntry)}</b>. Trên <b style="display:inline">${fmt(q.noChase)}</b> thì bỏ qua, đừng đuổi giá.<br>`:`Vùng vào hợp lệ: từ <b style="display:inline">${fmt(q.maxEntry)}</b> trở lên. Dưới <b style="display:inline">${fmt(q.noChase)}</b> thì bỏ qua, đừng đuổi giá.<br>`)}
+    ${dead?'':(sd>0?`Vùng vào hợp lệ: đến <b style="display:inline">${fmt(q.maxEntry)}</b> (R:R còn lại ≥ 1:${q.need}). Trên <b style="display:inline">${fmt(q.noChase)}</b> (R:R còn lại dưới 1:1) thì bỏ qua, đừng đuổi giá.<br>`:`Vùng vào hợp lệ: từ <b style="display:inline">${fmt(q.maxEntry)}</b> trở lên (R:R còn lại ≥ 1:${q.need}). Dưới <b style="display:inline">${fmt(q.noChase)}</b> (R:R còn lại dưới 1:1) thì bỏ qua, đừng đuổi giá.<br>`)}
     Cắt lỗ <b style="display:inline">${fmt(a.sl)}</b> (−${(a.risk/a.E0*100).toFixed(2)}%) · Chốt lời <b style="display:inline">${fmt(a.tp)}</b>${dead?'':` · lãi/lỗ còn lại 1:${q.rrLeft.toFixed(2)}`}
     ${age>6*36e5&&!dead?'<br>Tín hiệu này đã kéo dài hơn 6 giờ. Nếu chưa vào lệnh thì chỉ nên vào khi giá hồi về vùng hợp lệ.':''}</div>`;
 }
@@ -1515,7 +1653,7 @@ function renderCalc(){
       <div><label>Chốt lời</label><input type="number" step="any" inputmode="decimal" data-k="tp" value="${pv(st.tp)}"></div>
     </div>
     <div class="out" id="calcOut"></div>
-    <p class="note">Giá vào là giá hiện tại. Cắt lỗ và chốt lời lấy theo tín hiệu gốc khi đang có tín hiệu ${FUT()?'LONG/SHORT':'MUA'} còn hiệu lực, nếu không thì tính theo ATR khung 1h (cắt lỗ 1,5 ATR, chốt lời 2 lần mức rủi ro). Giá đã chạy xa khỏi điểm vào thì khoảng cách cắt lỗ lớn hơn và khối lượng tự giảm. Bạn có thể sửa tay.</p>
+    <p class="note">Giá vào là giá hiện tại. Cắt lỗ và chốt lời lấy theo tín hiệu gốc khi đang có tín hiệu ${FUT()?'LONG/SHORT':'MUA'} còn hiệu lực, nếu không thì tính theo ATR khung 1h (cắt lỗ 1,5 ATR, chốt lời ${S.rrT} lần mức rủi ro). Giá đã chạy xa khỏi điểm vào thì khoảng cách cắt lỗ lớn hơn và khối lượng tự giảm. Bạn có thể sửa tay.</p>
   </details>`;
   host.querySelector('details').addEventListener('input',e=>{
     const k=e.target.dataset&&e.target.dataset.k;if(!k) return;
@@ -1637,7 +1775,7 @@ async function btCoin(sym,mk,fut){
     for(const [key,no15,noMa] of keys){
       const v=mtfVerdict(noMa?stripMa(R):R,no15,fut),rd=mtfReady(v,fut)?v.side:'';
       if(rd&&rd!==prev[key]&&i-last[key]>=6&&isN(atr[i])){
-        const sg=rd==='sell'?-1:1,risk=1.5*atr[i],sig={i,side:rd,entry:c[i],risk,sl:c[i]-sg*risk,tp:c[i]+sg*2*risk,rr:2};
+        const sg=rd==='sell'?-1:1,risk=1.5*atr[i],rrT=+globalThis.__rrT||2,sig={i,side:rd,entry:c[i],risk,sl:c[i]-sg*risk,tp:c[i]+sg*rrT*risk,rr:rrT};
         const res=simulate(sig,h,l,c,n,60);
         if(res.status!=='open') out[key].push({R:res.R,late:i>=lateFrom,side:rd});
         last[key]=i;
@@ -1686,7 +1824,7 @@ function renderMtfBt(){
     ${row('1h đơn lẻ (cũ)',r.base)}${row('Đa khung 1d+4h+1h',r.mtf3)}${row(r.fut?'Đủ 4 khung + lọc MA':'Đủ 4 khung',r.mtf4)}${r.fut?row('Đủ 4 khung, không lọc MA',r.mtf4n||[])+row('  chỉ LONG (có lọc MA)',r.mtf4.filter(x=>x.side==='buy'))+row('  chỉ SHORT (có lọc MA)',r.mtf4.filter(x=>x.side==='sell')):''}</table>
     <p style="font-size:14px;margin:8px 0 4px">${msg}</p>
     ${r.fut&&(r.mtf4n||[]).length?`<p style="font-size:14px;margin:4px 0">${m4.n<20||m4n.n<20?'Lọc MA: mẫu còn ít nên chưa so sánh được.':m4.exp>m4n.exp?`Lọc MA5/MA10 trên 15m cải thiện kỳ vọng: ${R2(m4.exp)} so với ${R2(m4n.exp)} khi không lọc (${m4.n} so với ${m4n.n} lệnh).`:`Lọc MA5/MA10 chưa cải thiện kỳ vọng: ${R2(m4.exp)} so với ${R2(m4n.exp)} khi không lọc. Đừng tin vào bộ lọc này với dữ liệu hiện tại.`}</p>`:''}
-    ${S.mkt==='bstock'?'<p class="note">Hợp đồng TradFi của Bybit mới ra mắt từ khoảng tháng 3 và 4/2026 nên lịch sử chỉ vài tháng, mẫu nhỏ, chỉ mang tính tham khảo. Mức phí là giả định, backtest chưa tính phí funding.</p>':''}${S.mkt==='fx'?'<p class="note">Hợp đồng forex mới ra mắt 8/9/2026, lịch sử chỉ khoảng một tháng nên kết quả backtest gần như không có ý nghĩa thống kê. Mức phí là giả định, bạn nên đối chiếu với phí thật của Bybit.</p>':''}${S.mkt==='stock'?'<p class="note">Hợp đồng cổ phiếu mới niêm yết từ đầu 2026 nên lịch sử ngắn và mẫu nhỏ, chỉ mang tính tham khảo. Backtest chưa tính phí funding.</p>':''}<p class="note">${r.fut?'Tính cả lệnh LONG và SHORT, chưa tính phí funding và thanh lý.':'Chỉ tính lệnh mua.'} Vào ở giá đóng nến 1h, cắt lỗ 1,5 ATR(1h), chốt lời 2R, giữ tối đa 60 nến, phí giả định ${(((globalThis.__fee==null?0.002:globalThis.__fee))*50).toFixed(2).replace('.',',')}% mỗi chiều. Kỳ vọng tính theo R (1R = mức rủi ro mỗi lệnh). Mỗi tín hiệu chỉ dùng thông tin đã có tại lúc nến đóng. Quá khứ không đảm bảo tương lai, và đây là công cụ phân tích, không phải lời khuyên đầu tư.</p>`;
+    ${S.mkt==='bstock'?'<p class="note">Hợp đồng TradFi của Bybit mới ra mắt từ khoảng tháng 3 và 4/2026 nên lịch sử chỉ vài tháng, mẫu nhỏ, chỉ mang tính tham khảo. Mức phí là giả định, backtest chưa tính phí funding.</p>':''}${S.mkt==='fx'?'<p class="note">Hợp đồng forex mới ra mắt 8/9/2026, lịch sử chỉ khoảng một tháng nên kết quả backtest gần như không có ý nghĩa thống kê. Mức phí là giả định, bạn nên đối chiếu với phí thật của Bybit.</p>':''}${S.mkt==='stock'?'<p class="note">Hợp đồng cổ phiếu mới niêm yết từ đầu 2026 nên lịch sử ngắn và mẫu nhỏ, chỉ mang tính tham khảo. Backtest chưa tính phí funding.</p>':''}<p class="note">${r.fut?'Tính cả lệnh LONG và SHORT, chưa tính phí funding và thanh lý.':'Chỉ tính lệnh mua.'} Vào ở giá đóng nến 1h, cắt lỗ 1,5 ATR(1h), chốt lời ${S.rrT}R, giữ tối đa 60 nến, phí giả định ${(((globalThis.__fee==null?0.002:globalThis.__fee))*50).toFixed(2).replace('.',',')}% mỗi chiều. Kỳ vọng tính theo R (1R = mức rủi ro mỗi lệnh). Mỗi tín hiệu chỉ dùng thông tin đã có tại lúc nến đóng. Quá khứ không đảm bảo tương lai, và đây là công cụ phân tích, không phải lời khuyên đầu tư.</p>`;
 }
 
 /* ---------- Realtime: WebSocket Binance cho cả 4 khung (dự phòng: hỏi giá mỗi 4 giây) ---------- */
@@ -1867,13 +2005,6 @@ function renderAside(){
     ${row('30% dữ liệu mới nhất',st.oos.n?`${st.oos.n} lệnh, ${R2(st.oos.exp)}`:'chưa có lệnh')}</div>
     <p class="note">Kỳ vọng = tỷ lệ thắng × lãi trung bình − tỷ lệ thua × lỗ trung bình, tính theo R (1R = mức rủi ro mỗi lệnh). Thắng nhiều chưa chắc có lãi. Cần từ 20 lệnh trở lên và kỳ vọng dương ở cả phần dữ liệu mới nhất mới đáng tin.</p></div>`;
 
-  // Elliott
-  const ev=A.ewLast;
-  h+=`<div class="card"><h3>Sóng Elliott</h3>`+(ev?
-    `<p><span class="pill ${ev.side}">${ev.kind==='w5'?'Có thể đang vào sóng 5':'Sóng 5 có thể đã xong'}</span></p><p style="font-size:14px">${ev.text}</p>
-     <p class="note">Nhận diện bằng quy tắc cứng (sóng 2 không thủng đáy sóng 1, sóng 3 không ngắn nhất, sóng 4 không chồng sóng 1). Elliott mang tính chủ quan cao nên chỉ cộng tối đa 1,5 điểm.</p>`:
-    `<p class="note">Chưa thấy cấu trúc 5 sóng hợp lệ trong dữ liệu.</p>`)+`</div>`;
-
   // vùng giá
   const last=C[n-1].c,zs=A.zonesNow.slice().sort((a,b)=>Math.abs(a.mid-last)-Math.abs(b.mid-last)).slice(0,5).sort((a,b)=>b.mid-a.mid);
   h+=`<div class="card"><h3>Vùng giá gần nhất</h3>`+(zs.length?`<div class="kv">${zs.map(z=>`<span class="${z.mid>last?'dn':'up'}">${z.mid>last?'Kháng cự':'Hỗ trợ'} (${z.touches} lần chạm)</span><b>${fmt(z.lo)}–${fmt(z.hi)}</b>`).join('')}</div>`:`<p class="note">Chưa xác định được vùng nào.</p>`)+`</div>`;
@@ -1887,48 +2018,73 @@ function renderAside(){
 }
 
 /* ---------- màn hình Bộ lọc ---------- */
+const sideLbl=sd=>FUT()?(sd==='buy'?'LONG':'SHORT'):'MUA';
+function evalOpp(t,ents,ord){
+  const R={};ord.forEach((tf,i)=>{const fc=ents[i].A.fc;R[tf]={dir:fc.dir,pct:fc.pct,norm:fc.bias/fc.max,ma:fc.ma};});
+  const v=mv(R),ready=rdy(v),e15=ents[ord.indexOf('15m')]||ents[ents.length-1],C15=e15.C,P=C15[C15.length-1].c;
+  const o={sym:t.sym,price:P,chg:t.chg,v,ready,demo:ents.some(e=>e.demo)};
+  if(ready){try{const em={};ord.forEach((tf,i)=>{em[tf]=ents[i];});const a=mtfAnchor(ord,em,192,true,v.side,FUT());if(a){o.a=a;o.q=sigStatus(a,P);}}catch(e){}}
+  return o;
+}
+function oppRow(r){
+  const base=r.sym.replace('USDT',''),a=r.a,q=r.q,buy=r.v.side==='buy',cls=buy?'buy':'sell';
+  const chg=r.chg==null||!isFinite(r.chg)?'':`<span class="${r.chg>=0?'up':'dn'}">${r.chg>=0?'+':''}${r.chg.toFixed(1)}%</span>`;
+  const P=r.price,risk=Math.abs(a.E0-a.sl),slp=Math.abs(P-a.sl)/P*100,tpp=Math.abs(a.tp-P)/P*100;
+  const mid=`<span class="pill ${cls}">${r.v.txt}</span> <span class="mut">điểm ${r.v.score>0?'+':''}${Math.round(r.v.score*100)}</span>
+    <div class="kv" style="margin-top:6px"><span>Cắt lỗ</span><b class="dn">${fmt(a.sl)} (−${slp.toFixed(2)}%)</b><span>Chốt lời</span><b class="up">${fmt(a.tp)} (+${tpp.toFixed(2)}%)</b><span>R:R còn lại</span><b>1:${q.rrLeft.toFixed(2)}</b></div>`;
+  const right=q.st==='ok'?`<b class="up">Vào được ngay</b><div class="mut">quanh ${fmt(P)}, không đuổi quá ${fmt(q.maxEntry)}</div>`
+    :`<b style="color:#7A5300">Đặt lệnh chờ ${fmt(q.limitPx)}</b><div class="mut">giá đã chạy ${q.m.toFixed(2)}R, vào ngay chỉ còn 1:${q.rrLeft.toFixed(2)}</div>`;
+  return `<button class="row" data-sym="${r.sym}"><div class="sym"><b>${base}</b><span class="mut">/USDT</span><div>${fmt(P)} ${chg}</div></div><div>${mid}</div><div>${right}</div></button>`;
+}
 function renderScan(){
-  let rows=S.scan.slice();
-  if(S.filter!=='all') rows=rows.filter(r=>r.now.ok&&r.now.side===S.filter);
-  if(S.onlyPos) rows=rows.filter(r=>r.st.n>=10&&r.st.exp>0);
-  rows.sort((a,b)=>(b.now.ok-a.now.ok)||(b.now.score-a.now.score)||(b.st.exp-a.st.exp));
-  if(!rows.length){$('rows').innerHTML=`<div class="empty">${S.scanning?'Đang quét…':'Không có coin nào khớp bộ lọc. Thử bỏ bớt điều kiện hoặc đổi khung thời gian.'}</div>`;return;}
-  $('rows').innerHTML=rows.map(r=>{
-    const vd=verdict(r.now),bd=btBadge(r.st,r.oos);
-    const chg=r.chg==null?'':`<span class="${r.chg>=0?'up':'dn'}">${r.chg>=0?'+':''}${r.chg.toFixed(1)}%</span>`;
-    const pct=r.now.ok?r.now.strength:Math.round(r.now.strength*0.6);
-    return `<button class="row" data-sym="${r.sym}">
-      <div class="sym"><b>${r.sym.replace('USDT','')}</b><span class="mut">/USDT</span><div>${fmt(r.price)} ${chg}</div></div>
-      <div><span class="pill ${vd.cls}">${vd.txt}</span> <span class="meter ${vd.cls}"><i style="width:${pct}%"></i></span>
-        <div class="tags">${r.now.items.map(it=>`<span class="tg2 ${it.pts<0?'neu':r.now.side}">${TYPE_LABEL[it.type]}</span>`).join('')||'<span class="mut" style="font-size:13px">Chưa có chỉ báo nào phát tín hiệu</span>'}</div></div>
-      <div><div>Thắng ${(r.st.wr*100).toFixed(0)}% trên ${r.st.n} lệnh</div><div class="mut">Kỳ vọng ${r.st.n?R2(r.st.exp):'–'}</div><span class="badge ${bd.cls}">${bd.txt}</span></div>
-    </button>`;
-  }).join('');
+  const rows=S.scan.slice(),info=$('scanInfo');
+  const has=r=>r.ready&&r.a&&r.q;
+  const good=rows.filter(r=>has(r)&&r.q.st==='ok').sort((a,b)=>Math.abs(b.v.score)-Math.abs(a.v.score));
+  const late=rows.filter(r=>has(r)&&r.q.st==='late').sort((a,b)=>b.q.rrLeft-a.q.rrLeft);
+  const dead=rows.filter(r=>has(r)&&!['ok','late'].includes(r.q.st)).length;
+  const watch=rows.filter(r=>!r.ready&&r.v.side).sort((a,b)=>Math.abs(b.v.score)-Math.abs(a.v.score));
+  if(info){const d=new Date(S.scanAt||Date.now());info.textContent=(S.scanning?'Đang quét… ':'')+`Quét ${rows.length} mã lúc ${pad(d.getHours())}:${pad(d.getMinutes())}, tự quét lại mỗi 3 phút khi để tab này mở`;}
+  let h='';
+  const sec=(t,n,body)=>`<div style="padding:10px 16px 4px;font-weight:700;background:#EEF2F5;border-bottom:1px solid var(--line)">${t} <span class="mut" style="font-weight:500">(${n})</span></div>${body}`;
+  if(good.length) h+=sec(`Có điểm ${FUT()?'LONG/SHORT':'MUA'}, vào được ngay`,good.length,good.map(oppRow).join(''));
+  if(late.length) h+=sec('Đã có tín hiệu nhưng giá chạy rồi, nên đặt lệnh chờ',late.length,late.map(oppRow).join(''));
+  if(watch.length) h+=sec('Sắp có điểm vào (đã nghiêng hướng, chờ 15m hoặc MA xác nhận)',watch.length,watch.map(r=>`<button class="row" data-sym="${r.sym}" style="min-height:54px"><div class="sym"><b>${r.sym.replace('USDT','')}</b><span class="mut">/USDT</span></div><div><span class="pill ${r.v.side==='buy'?'buy':'sell'}">${r.v.txt}</span></div><div class="mut" style="font-size:13px">${r.v.why}</div></button>`).join(''));
+  if(!h) h=`<div class="empty">${S.scanning?'Đang quét…':'Hiện chưa có mã nào đủ điều kiện.'}</div>`;
+  if(dead&&!S.scanning) h+=`<div class="note" style="padding:10px 16px">Đã ẩn ${dead} mã có tín hiệu nhưng đã trễ hoặc hết hiệu lực (R:R còn lại dưới 1:1 hoặc đã chạm cắt lỗ/chốt lời).</div>`;
+  $('rows').innerHTML=h;
 }
 async function runScan(){
   if(S.scanning) return;
   const mk=S.mkt,tok=++S.scanTok;
-  S.scanning=true;S.scan=[];S.scannedTf=S.tf;
+  S.scanning=true;S.scan=[];S.scannedTf=S.tf;S.scanAt=Date.now();
   const pg=$('prog');pg.hidden=false;pg.firstElementChild.style.width='2%';
-  $('rows').innerHTML='<div class="empty">Đang quét…</div>';
-  const list=await loadTop(25,mk);let done=0;const q=list.slice();
+  $('rows').innerHTML='<div class="empty">Đang quét các mã lớn nhất…</div>';
+  const list=await loadTop(25,mk),ord=mtfOf(mk);let done=0;const q=list.slice();
   if(tok!==S.scanTok) return;
   const worker=async()=>{
     while(q.length){
       const t=q.shift();
       if(tok!==S.scanTok) return;
       try{
-        const e=await load(t.sym,S.tf,mk),C=e.C,bars=Math.round(86400000/TFS[S.tf]);
-        const chg=t.chg!=null?t.chg:(C.length>bars?(C[C.length-1].c/C[C.length-1-bars].c-1)*100:null);
+        const ents=await Promise.all(ord.map(tf=>load(t.sym,tf,mk)));
         if(tok!==S.scanTok) return;
-        S.scan.push({sym:t.sym,price:C[C.length-1].c,chg,now:e.A.now,st:e.A.stats.all,oos:e.A.stats.oos});
+        S.scan.push(evalOpp(t,ents,ord));
       }catch(err){}
       done++;pg.firstElementChild.style.width=Math.round(done/list.length*100)+'%';renderScan();
     }
   };
-  await Promise.all(Array.from({length:5},worker));
+  await Promise.all(Array.from({length:4},worker));
   if(tok!==S.scanTok) return;
-  S.scanning=false;pg.hidden=true;renderScan();updateSrc();
+  S.scanning=false;pg.hidden=true;S.scanAt=Date.now();
+  // báo khi có mã mới đủ điều kiện vào ngay
+  const keys=S.scan.filter(r=>r.ready&&r.a&&r.q&&r.q.st==='ok').map(r=>r.sym+'|'+r.v.side),old=S.oppKeys[mk];
+  if(old) for(const r of S.scan) if(r.ready&&r.a&&r.q&&r.q.st==='ok'&&!old.includes(r.sym+'|'+r.v.side)){
+    const msg=r.sym.replace('USDT','')+': có điểm '+sideLbl(r.v.side)+' mới (R:R còn lại 1:'+r.q.rrLeft.toFixed(2)+')';
+    toast(msg,r.v.side);
+    try{if('Notification' in window&&Notification.permission==='granted') new Notification('Trạm tín hiệu coin',{body:msg});}catch(e){}
+  }
+  S.oppKeys[mk]=keys;
+  renderScan();updateSrc();
 }
 
 /* ---------- điều khiển ---------- */
@@ -2022,7 +2178,7 @@ function setTab(t){
   $('tabChart').setAttribute('aria-selected',t==='chart');$('tabScan').setAttribute('aria-selected',t==='scan');$('tabFwd').setAttribute('aria-selected',t==='fwd');
   if(t==='fwd') loadFwd();
   if(t==='chart') requestAnimationFrame(draw);
-  if(t==='scan'&&(!S.scan.length||S.scannedTf!==S.tf)&&!S.scanning) runScan();
+  if(t==='scan'&&(!S.scan.length||S.scannedTf!==S.tf||Date.now()-(S.scanAt||0)>180000)&&!S.scanning) runScan();
 }
 function tfButtons(host){
   host.innerHTML=(MKT[S.mkt].tfs||Object.keys(TFS)).map(k=>`<button class="chip" data-tf="${k}" aria-pressed="${k===S.tf}">${k}</button>`).join(' ');
@@ -2031,6 +2187,33 @@ function setTf(tf){
   if(tf===S.tf) return;
   S.tf=tf;tfButtons($('tfChart'));tfButtons($('tfScan'));
   if(S.tab==='chart') showChart(); else if(S.tab==='scan') runScan();
+}
+const FT_LIST=[['vwap','VWAP'],['div','Phân kỳ RSI/MACD'],['ob','Order Block'],['fvg','FVG']];
+function buildFt(){
+  $('ftBar').innerHTML='<span class="mut" style="font-size:13px">Bổ trợ (bật/tắt, tính vào điểm):</span>'+FT_LIST.map(([k,t])=>`<button class="chip sm" data-ft="${k}" aria-pressed="${!!S.ft[k]}">${t}</button>`).join('');
+}
+function reAll(){
+  for(const mk in S.caches) for(const ent of S.caches[mk].values()){try{ent.A=analyze(ent.C);}catch(e){}}
+  S.selSig=null;S.lastV={};S.mtfLive=null;S.mtfBt=null;S.anchor=null;for(const m in S.saved) if(S.saved[m]) S.saved[m].mtfBt=null;
+  S.scan=[];S.scannedTf=null;
+  if(S.tab==='scan') runScan();
+  if(S.cur){renderAside();draw();}
+}
+function toggleFt(k,b){
+  S.ft[k]=S.ft[k]?0:1;b.setAttribute('aria-pressed',!!S.ft[k]);
+  globalThis.__ft=S.ft;try{localStorage.setItem('ft',JSON.stringify(S.ft));}catch(e){}
+  reAll();
+}
+const RRT=[1.5,2,3],RRM=[1.5,2];
+function buildSet(){
+  $('setBar').innerHTML='<span class="mut" style="font-size:13px">Chốt lời</span>'+RRT.map(v=>`<button class="chip sm" data-rrt="${v}" aria-pressed="${S.rrT===v}">1:${v}</button>`).join('')
+   +'<span class="sep"></span><span class="mut" style="font-size:13px">R:R còn lại tối thiểu để vào lệnh</span>'+RRM.map(v=>`<button class="chip sm" data-minrr="${v}" aria-pressed="${S.minRR===v}">1:${v}</button>`).join('');
+}
+function setRR(kind,v){
+  if(kind==='rrT') S.rrT=v; else S.minRR=v;
+  globalThis.__rrT=S.rrT;globalThis.__minRR=S.minRR;
+  try{localStorage.setItem('rr',JSON.stringify({rrT:S.rrT,minRR:S.minRR}));}catch(e){}
+  buildSet();reAll();
 }
 function buildLayers(){
   $('layers').innerHTML=LAYERS.map(([k,t])=>`<button class="chip sm" data-layer="${k}" aria-pressed="${!!S.L[k]}">${t}</button>`).join('');
@@ -2077,12 +2260,18 @@ function tap(px,py_){
 }
 
 function init(){
-  tfButtons($('tfChart'));tfButtons($('tfScan'));buildLayers();bindChart();
+  try{const f=JSON.parse(localStorage.getItem('ft')||'null');if(f) Object.assign(S.ft,f);}catch(e){}
+  try{const q=JSON.parse(localStorage.getItem('rr')||'null');if(q){if(RRT.includes(q.rrT)) S.rrT=q.rrT;if(RRM.includes(q.minRR)) S.minRR=q.minRR;}}catch(e){}
+  globalThis.__ft=S.ft;globalThis.__rrT=S.rrT;globalThis.__minRR=S.minRR;
+  tfButtons($('tfChart'));tfButtons($('tfScan'));buildLayers();buildFt();buildSet();bindChart();
   $('tabChart').onclick=()=>setTab('chart');$('tabScan').onclick=()=>setTab('scan');
   document.addEventListener('click',e=>{
     const b=e.target.closest('button');if(!b) return;
     if(b.dataset.tf){setTf(b.dataset.tf);}
     else if(b.dataset.layer){const k=b.dataset.layer;S.L[k]=S.L[k]?0:1;b.setAttribute('aria-pressed',!!S.L[k]);draw();}
+    else if(b.dataset.ft){toggleFt(b.dataset.ft,b);}
+    else if(b.dataset.rrt){setRR('rrT',+b.dataset.rrt);}
+    else if(b.dataset.minrr){setRR('minRR',+b.dataset.minrr);}
     else if(b.dataset.sig){const s=S.cur.A.signals.find(x=>x.i===+b.dataset.sig);if(s){S.selSig=s;S.selBar=s.i;centerOn(s.i);renderAside();draw();}}
     else if(b.dataset.sym){S.sym=b.dataset.sym;setTab('chart');showChart();}
     else if(b.dataset.f){S.filter=b.dataset.f;document.querySelectorAll('[data-f]').forEach(x=>x.setAttribute('aria-pressed',x===b));renderScan();}
@@ -2101,7 +2290,6 @@ function init(){
   try{if(localStorage.getItem('mode')==='fut') setMode('fut');}catch(e){}
   $('refresh').onclick=refreshNow;
   $('retry').onclick=()=>{netReset();S.cache.clear();S.scan=[];S.scannedTf=null;showChart();if(S.tab==='scan')runScan();};
-  $('onlyPos').onclick=e=>{S.onlyPos=!S.onlyPos;e.currentTarget.setAttribute('aria-pressed',S.onlyPos);renderScan();};
   $('rescan').onclick=()=>{S.cache.clear();S.scan=[];runScan();};
   const go=()=>{let s=$('symIn').value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');if(!s)return;if(S.mkt!=='coin'){if(!/(USDT|USDC)$/.test(s))s+='USDT';}else if(!/.{2,}(USDT|USDC|BTC|ETH|FDUSD)$/.test(s))s+='USDT';S.sym=s;showChart();};
   $('symGo').onclick=go;$('symIn').addEventListener('keydown',e=>{if(e.key==='Enter')go();});
@@ -2120,6 +2308,7 @@ function init(){
   document.addEventListener('visibilitychange',()=>{
     if(!document.hidden&&S.cur&&!S.cur.demo&&Date.now()-RT.lastMsg>10000){const sy=S.sym;rtStop();RT.sym=null;rtStart(sy);}
   });
+  setInterval(()=>{if(document.hidden||S.tab!=='scan'||S.scanning) return;if(Date.now()-(S.scanAt||0)>180000) runScan();},15000);
   loadTop(25);
   showChart();
 }
