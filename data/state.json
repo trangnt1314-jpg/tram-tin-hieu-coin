@@ -1,8 +1,8 @@
 {
  "v": {
   "coin:BTCUSDT": {
-   "txt": "MUA MẠNH",
-   "ready": true,
+   "txt": "MUA, chờ điểm vào",
+   "ready": false,
    "last": 1792369931051,
    "side": "buy"
   },
@@ -13,8 +13,8 @@
    "side": "sell"
   },
   "coin:SOLUSDT": {
-   "txt": "MUA",
-   "ready": true,
+   "txt": "CHỜ",
+   "ready": false,
    "last": 0,
    "side": "buy"
   },
