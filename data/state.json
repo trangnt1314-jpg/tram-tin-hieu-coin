@@ -7,7 +7,7 @@
    "side": "buy"
   },
   "coin:ETHUSDT": {
-   "txt": "MUA, chờ điểm vào",
+   "txt": "CHỜ",
    "ready": false,
    "last": 0,
    "side": "buy"
@@ -19,7 +19,7 @@
    "side": "buy"
   },
   "coin:BNBUSDT": {
-   "txt": "MUA, chờ điểm vào",
+   "txt": "CHỜ",
    "ready": false,
    "last": 1792536072343,
    "side": "buy"
