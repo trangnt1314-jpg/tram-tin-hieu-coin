@@ -19,8 +19,8 @@
    "side": "buy"
   },
   "coin:BNBUSDT": {
-   "txt": "MUA",
-   "ready": true,
+   "txt": "MUA, chờ điểm vào",
+   "ready": false,
    "last": 1792748834917,
    "side": "buy"
   }

@@ -1,5 +1,5 @@
 {
- "lastRun": 1792748834917,
+ "lastRun": 1792766629859,
  "signals": [
   {
    "id": "coin:BTCUSDT:1792323324342",
@@ -129,7 +129,8 @@
     "15m": "buy"
    },
    "status": "open",
-   "R": null
+   "R": null,
+   "lost": 1792766629859
   }
  ]
 }
