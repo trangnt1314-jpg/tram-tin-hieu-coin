@@ -19,9 +19,9 @@
    "side": "buy"
   },
   "coin:BNBUSDT": {
-   "txt": "CHỜ",
-   "ready": false,
-   "last": 1792536072343,
+   "txt": "MUA",
+   "ready": true,
+   "last": 1792748834917,
    "side": "buy"
   }
  }
