@@ -253,7 +253,7 @@ canvas{display:block;width:100%;height:100%}
     <div id="posList"></div>
   </section>
 
-  <p class="foot">Công cụ hỗ trợ phân tích, không phải lời khuyên đầu tư. Dự báo gom từ MACD, StochRSI, VWAP, FRVP (volume profile), phân kỳ RSI/MACD, Order Block, FVG, Bollinger, Ichimoku, Fibonacci, vùng giá, volume và xu hướng EMA; đây là kịch bản ước tính cho các nến sắp tới, chưa xảy ra. Tín hiệu chỉ là xác suất, không có chỉ báo nào dự báo chắc chắn. Backtest giả định khớp lệnh tại giá đóng cửa nến tín hiệu, phí giả định theo từng thị trường (coin 0,1% mỗi chiều, cổ phiếu 0,05%, Bybit TradFi 0,06%, forex 0,03%), nếu cùng một nến chạm cả cắt lỗ và chốt lời thì tính là thua.</p>
+  <p class="foot">Công cụ hỗ trợ phân tích, không phải lời khuyên đầu tư. Dự báo gom từ MACD, StochRSI, VWAP, Kalman Trend Levels, phân kỳ RSI/MACD, Order Block, FVG, Bollinger, Ichimoku, Fibonacci, vùng giá, volume và xu hướng EMA; đây là kịch bản ước tính cho các nến sắp tới, chưa xảy ra. Tín hiệu chỉ là xác suất, không có chỉ báo nào dự báo chắc chắn. Backtest giả định khớp lệnh tại giá đóng cửa nến tín hiệu, phí giả định theo từng thị trường (coin 0,1% mỗi chiều, cổ phiếu 0,05%, Bybit TradFi 0,06%, forex 0,03%), nếu cùng một nến chạm cả cắt lỗ và chốt lời thì tính là thua.</p>
 </main>
 
 <script>
@@ -628,9 +628,10 @@ function zonePass(n, o, h, l, c, ind, create, type, pts, txtFn, add, vArr, list)
   }
 }
 
-/* ---------- FRVP: Fixed Range Volume Profile ----------
-   Chia khoảng giá từ nến a đến nến i thành NB mức, rải khối lượng mỗi nến đều lên các mức nó chạm.
-   POC = mức nhiều khối lượng nhất; vùng giá trị (VAL..VAH) = dải liền kề POC chứa 70% khối lượng. */
+/* ---------- FRVP (Fixed Range Volume Profile): chỉ để XEM, không tính vào điểm, tín hiệu hay backtest ----------
+   Profile của nhịp xu hướng hiện tại trên từng khung: xu hướng tăng (đáy sau cao hơn đáy trước) thì lấy từ đáy đầu chuỗi đáy nâng dần tới đỉnh cao nhất đã đạt;
+   xu hướng giảm thì từ đỉnh đầu chuỗi đỉnh hạ dần tới đáy thấp nhất đã đạt. Đi ngang hoặc nhịp nhỏ hơn 3 ATR / ngắn hơn 15 nến thì không có profile.
+   Rải khối lượng mỗi nến đều lên các mức giá nó chạm (40 mức). POC = mức nhiều khối lượng nhất, VAL..VAH = dải quanh POC chứa 70% khối lượng. */
 function frvpCalc(a, i, h, l, v) {
   const NB = 40;
   let hi = -Infinity, lo = Infinity;
@@ -652,9 +653,31 @@ function frvpCalc(a, i, h, l, v) {
   }
   return { a, i, lo, hi, bs, NB, vol, pocB: pb, poc: lo + (pb + 0.5) * bs, vah: lo + (hb + 1) * bs, val: lo + lb * bs, tot };
 }
+function frvpTrend(zzp, h, l, v, atrA, n) {
+  const i = n - 1;
+  if (!zzp || n < 60 || !isFinite(atrA[i])) return null;
+  let pi = -1;
+  while (pi + 1 < zzp.length && zzp[pi + 1].conf <= i) pi++;
+  const prevSame = k => { for (let m = k - 1; m >= 0; m--) if (zzp[m].t === zzp[k].t) return m; return -1; };
+  let L1 = -1, H1 = -1;
+  for (let k = pi; k >= 0 && (L1 < 0 || H1 < 0); k--) { if (zzp[k].t === 'L' && L1 < 0) L1 = k; if (zzp[k].t === 'H' && H1 < 0) H1 = k; }
+  const L2 = L1 >= 0 ? prevSame(L1) : -1, H2 = H1 >= 0 ? prevSame(H1) : -1;
+  const hl = L2 >= 0 && zzp[L1].p > zzp[L2].p, lh = H2 >= 0 && zzp[H1].p < zzp[H2].p;
+  if (hl === lh) return null;
+  let k = hl ? L1 : H1;
+  while (prevSame(k) >= 0 && (hl ? zzp[prevSame(k)].p < zzp[k].p : zzp[prevSame(k)].p > zzp[k].p)) k = prevSame(k);
+  const a = Math.max(zzp[k].j, i - 400);
+  let e = a;
+  for (let q = a; q <= i; q++) if (hl ? h[q] > h[e] : l[q] < l[e]) e = q;
+  if (e - a + 1 < 15) return null;
+  const P = frvpCalc(a, e, h, l, v);
+  if (!P || !(P.hi - P.lo >= 3 * atrA[i])) return null;
+  P.tr = hl ? 1 : -1; P.e = e;
+  return P;
+}
 
-function extras(C, o, h, l, c, v, ind, FT, add, zzp) {
-  const n = C.length, X = { on: FT, vwap: NaNs(n), poc: NaNs(n), vah: NaNs(n), val: NaNs(n), frLast: null, obs: [], fvgs: [], divs: [], divAt: new Array(n).fill(null), obV: new Array(n).fill(0), fvgV: new Array(n).fill(0) };
+function extras(C, o, h, l, c, v, ind, FT, add) {
+  const n = C.length, X = { on: FT, vwap: NaNs(n), obs: [], fvgs: [], divs: [], divAt: new Array(n).fill(null), obV: new Array(n).fill(0), fvgV: new Array(n).fill(0) };
   const F = x => x.toFixed(0);
 
   // VWAP: khung 15m/1h reset mỗi ngày UTC, khung 4h/1d reset mỗi tuần
@@ -679,57 +702,24 @@ function extras(C, o, h, l, c, v, ind, FT, add, zzp) {
     }
   }
 
-  // FRVP, 3 kiểu neo (FT.frMode): 'swing' = từ đáy đầu xu hướng tăng tới đỉnh đã đạt (xu hướng giảm thì ngược lại), 'now' = từ mốc đó tới nến hiện tại, 'cur' = kiểu cũ theo cực trị 200 nến. Mỗi nến chỉ dùng dữ liệu đến chính nó
-  if (FT.frvp && zzp && n > 60) {
-    const mode = FT.frMode === 'cur' || FT.frMode === 'now' ? FT.frMode : 'swing';
-    // prevSame[k]: chỉ số của pivot cùng loại (đỉnh/đáy) ngay trước pivot k
-    const prevSame = zzp.map((q, k) => { for (let m = k - 1; m >= 0; m--) if (zzp[m].t === q.t) return m; return -1; });
-    let pi = -1;
-    for (let i = 40; i < n; i++) {
-      while (pi + 1 < zzp.length && zzp[pi + 1].conf <= i) pi++;
-      let a = -1, e = i, tr = 0;
-      if (mode === 'cur') {
-        // kiểu cũ: đỉnh cao nhất hoặc đáy thấp nhất trong 200 nến gần đây (cách nay ít nhất 30 nến, lấy mốc gần hơn), tính đến nến hiện tại
-        let hA = -1, lA = -1, hP = -Infinity, lP = Infinity;
-        for (let k = pi; k >= 0 && i - zzp[k].j <= 200; k--) {
-          const q = zzp[k];
-          if (q.t === 'H' && q.p > hP) { hP = q.p; hA = q.j; }
-          if (q.t === 'L' && q.p < lP) { lP = q.p; lA = q.j; }
-        }
-        for (const j of [hA, lA]) if (j >= 0 && i - j >= 30 && j > a) a = j;
-        if (a < 0 && i >= 60) a = Math.max(0, i - 100);
-      } else {
-        // theo xu hướng: tăng = đáy sau cao hơn đáy trước (và đỉnh không thấp dần), giảm = ngược lại; còn lại là đi ngang/giằng co thì bỏ qua
-        let L1 = -1, H1 = -1;
-        for (let k = pi; k >= 0 && (L1 < 0 || H1 < 0); k--) { if (zzp[k].t === 'L' && L1 < 0) L1 = k; if (zzp[k].t === 'H' && H1 < 0) H1 = k; }
-        const L2 = L1 >= 0 ? prevSame[L1] : -1, H2 = H1 >= 0 ? prevSame[H1] : -1;
-        const hl = L2 >= 0 && zzp[L1].p > zzp[L2].p, lh = H2 >= 0 && zzp[H1].p < zzp[H2].p;
-        if (hl !== lh) {
-          tr = hl ? 1 : -1;
-          let k = hl ? L1 : H1;                       // lùi theo chuỗi đáy nâng dần (hoặc đỉnh hạ dần) tới điểm bắt đầu xu hướng
-          while (prevSame[k] >= 0 && (hl ? zzp[prevSame[k]].p < zzp[k].p : zzp[prevSame[k]].p > zzp[k].p)) k = prevSame[k];
-          a = Math.max(zzp[k].j, i - 400);
-          if (mode === 'swing') { let ei = a; for (let q = a; q <= i; q++) if (hl ? h[q] > h[ei] : l[q] < l[ei]) ei = q; e = ei; }   // kết thúc ở đỉnh (xu hướng tăng) hoặc đáy (xu hướng giảm) đã đạt
-        }
-      }
-      if (a < 0) continue;
-      if (mode !== 'cur' && e - a + 1 < 15) continue;
-      const P = frvpCalc(a, e, h, l, v);
-      if (!P) continue;
-      if (mode !== 'cur' && !(P.hi - P.lo >= 3 * ind.atr[i])) continue;   // nhịp quá nhỏ so với ATR thì không đủ ý nghĩa
-      P.tr = tr; P.mode = mode;
-      X.poc[i] = P.poc; X.vah[i] = P.vah; X.val[i] = P.val;
-      if (i === n - 1) X.frLast = P;
-      const pp = X.poc[i - 1], vh = X.vah[i - 1], vl = X.val[i - 1], atr = ind.atr[i];
-      if (!isN(pp) || !isN(vh) || !isN(vl) || !isN(atr)) continue;
-      const above3 = [1, 2, 3].every(k => isN(X.poc[i - k]) && c[i - k] > X.poc[i - k]);
-      const below3 = [1, 2, 3].every(k => isN(X.poc[i - k]) && c[i - k] < X.poc[i - k]);
-      if (c[i - 1] <= vh && c[i] > vh && c[i] > o[i]) add(i, 'buy', 'frvp', 1.0, `Giá đóng cửa vượt lên trên VAH (${fmt(vh)}) của FRVP: thoát khỏi vùng giá trị bằng nến xanh, phe mua chiếm ưu thế`);
-      else if (c[i - 1] >= vl && c[i] < vl && c[i] < o[i]) add(i, 'sell', 'frvp', 1.0, `Giá đóng cửa rơi xuống dưới VAL (${fmt(vl)}) của FRVP: rời vùng giá trị bằng nến đỏ, phe bán chiếm ưu thế`);
-      else if (above3 && l[i] <= pp + 0.1 * atr && c[i] > pp && c[i] > o[i]) add(i, 'buy', 'frvp', 1.2, `Giá hồi về chạm POC (${fmt(pp)}) của FRVP từ phía trên rồi bật lên bằng nến xanh: POC đang làm hỗ trợ`);
-      else if (below3 && h[i] >= pp - 0.1 * atr && c[i] < pp && c[i] < o[i]) add(i, 'sell', 'frvp', 1.2, `Giá hồi lên chạm POC (${fmt(pp)}) của FRVP từ phía dưới rồi bị đẩy xuống bằng nến đỏ: POC đang làm kháng cự`);
-      else if (c[i - 1] < vl && c[i] > vl && c[i] > o[i]) add(i, 'buy', 'frvp', 0.8, `Giá rơi khỏi vùng giá trị FRVP nhưng đã đóng cửa quay lại trên VAL (${fmt(vl)}): phá đáy thất bại, thường chạy về POC (${fmt(pp)})`);
-      else if (c[i - 1] > vh && c[i] < vh && c[i] < o[i]) add(i, 'sell', 'frvp', 0.8, `Giá vượt vùng giá trị FRVP nhưng đã đóng cửa quay lại dưới VAH (${fmt(vh)}): vượt đỉnh thất bại, thường chạy về POC (${fmt(pp)})`);
+  // Kalman Trend Levels: đổi xu hướng (Kalman 50 cắt Kalman 150) và hồi test hộp hỗ trợ/kháng cự theo đúng xu hướng
+  if (FT.kal && ind.kal && n > 60) {
+    const fl = new Map(ind.kal.flips.map(f => [f.i, f]));
+    const lowB = ind.kal.boxes.filter(b => b.up), upB = ind.kal.boxes.filter(b => !b.up);
+    let li = -1, ui = -1;
+    for (let i = 2; i < n; i++) {
+      while (li + 1 < lowB.length && lowB[li + 1].i0 <= i) li++;
+      while (ui + 1 < upB.length && upB[ui + 1].i0 <= i) ui++;
+      const ks = ind.kalS[i], kl = ind.kalL[i];
+      if (!isN(ks) || !isN(kl)) continue;
+      const f = fl.get(i);
+      if (f) add(i, f.up ? 'buy' : 'sell', 'kal', 1.2, f.up
+        ? `Kalman 50 cắt lên trên Kalman 150: xu hướng đổi sang tăng, hộp hỗ trợ ${fmt(l[i])}–${fmt(lowB[li].top)}`
+        : `Kalman 50 cắt xuống dưới Kalman 150: xu hướng đổi sang giảm, hộp kháng cự ${fmt(upB[ui].bot)}–${fmt(h[i])}`);
+      else if (ks > kl && li >= 0 && l[i] > lowB[li].top && l[i - 1] <= lowB[li].top)
+        add(i, 'buy', 'kal', 1.0, `Giá hồi về chạm hộp hỗ trợ Kalman (${fmt(lowB[li].bot)}–${fmt(lowB[li].top)}) rồi bật lên trong xu hướng tăng`);
+      else if (ks < kl && ui >= 0 && h[i] < upB[ui].bot && h[i - 1] >= upB[ui].bot)
+        add(i, 'sell', 'kal', 1.0, `Giá hồi lên chạm hộp kháng cự Kalman (${fmt(upB[ui].bot)}–${fmt(upB[ui].top)}) rồi bị đẩy xuống trong xu hướng giảm`);
     }
   }
 
@@ -810,7 +800,7 @@ function extras(C, o, h, l, c, v, ind, FT, add, zzp) {
 }
 
 /* ---------- Phân tích chính ---------- */
-const TYPE_LABEL = { macd: 'MACD', kdj: 'KDJ', srsi: 'StochRSI', sr: 'Vùng giá', vwap: 'VWAP', frvp: 'FRVP', div: 'Phân kỳ', ob: 'Order Block', fvg: 'FVG', bb: 'Bollinger', ew: 'Elliott', vol: 'Volume', trend: 'Xu hướng', ichi: 'Ichimoku', fib: 'Fibonacci' };
+const TYPE_LABEL = { macd: 'MACD', kdj: 'KDJ', srsi: 'StochRSI', sr: 'Vùng giá', vwap: 'VWAP', kal: 'Kalman', div: 'Phân kỳ', ob: 'Order Block', fvg: 'FVG', bb: 'Bollinger', ew: 'Elliott', vol: 'Volume', trend: 'Xu hướng', ichi: 'Ichimoku', fib: 'Fibonacci' };
 
 function analyze(C, opts) {
   opts = opts || {};
@@ -827,7 +817,7 @@ function analyze(C, opts) {
   const add = (i, side, type, pts, txt, confirm) => trig[i].push({ side, type, pts, txt, confirm: !!confirm });
   const F0 = x => x.toFixed(0), F1 = x => x.toFixed(1);
 
-  const X = extras(C, o, h, l, c, v, ind, FT, add, zz.piv);
+  const X = extras(C, o, h, l, c, v, ind, FT, add);
 
   const START = 40;
   for (let i = START; i < n; i++) {
@@ -1057,12 +1047,10 @@ function analyze(C, opts) {
       else vote('fib', -sg, `Giá đã đi ngược và phá hết nhịp ${nm} gần nhất (${sw}): cấu trúc ${nm} bị vô hiệu`);
     }
     if (FT.vwap && isN(X.vwap[i])) vote('vwap', c[i] > X.vwap[i] ? 0.6 : -0.6, `Giá ${c[i] > X.vwap[i] ? 'trên' : 'dưới'} VWAP (${fmt(X.vwap[i])}): ${c[i] > X.vwap[i] ? 'phe mua đang kiểm soát giá vốn trung bình' : 'phe bán đang kiểm soát giá vốn trung bình'}`);
-    if (FT.frvp && isN(X.poc[i])) {
-      const pc = X.poc[i], vh = X.vah[i], vl = X.val[i];
-      vote('frvp', c[i] > vh ? 0.8 : c[i] < vl ? -0.8 : c[i] > pc ? 0.35 : -0.35,
-        c[i] > vh ? `Giá nằm trên VAH (${fmt(vh)}) của FRVP: giá đã thoát lên trên vùng giá trị, phe mua đang chiếm ưu thế`
-        : c[i] < vl ? `Giá nằm dưới VAL (${fmt(vl)}) của FRVP: giá đã rơi khỏi vùng giá trị, phe bán đang chiếm ưu thế`
-        : `Giá trong vùng giá trị FRVP (${fmt(vl)}–${fmt(vh)}), ${c[i] > pc ? 'trên' : 'dưới'} POC (${fmt(pc)}): ${c[i] > pc ? 'nghiêng nhẹ về phe mua' : 'nghiêng nhẹ về phe bán'}`);
+    if (FT.kal && i >= 2 && isN(ind.kalS[i]) && isN(ind.kalL[i]) && isN(ind.kalS[i - 2])) {
+      const ks = ind.kalS[i], kl = ind.kalL[i], up = ks > kl, rising = ks > ind.kalS[i - 2];
+      vote('kal', (up ? 1 : -1) * (up === rising ? 1 : 0.3),
+        `Kalman 50 ${up ? 'trên' : 'dưới'} Kalman 150 (${fmt(ks)} / ${fmt(kl)}): xu hướng ${up ? 'tăng' : 'giảm'}, đường 50 đang ${rising ? 'dốc lên' : 'dốc xuống'}${up === rising ? '' : ' (ngược xu hướng nên chỉ tính nhẹ)'}`);
     }
     if (FT.div) for (let k = 0; k <= 8 && i - k >= 0; k++) { const d = X.divAt[i - k]; if (d) { vote('div', d.side === 'buy' ? 1 : -1, `Có phân kỳ ${d.side === 'buy' ? 'tăng' : 'giảm'} RSI/MACD xuất hiện ${k === 0 ? 'ở nến vừa đóng' : 'cách ' + k + ' nến'}`); break; } }
     if (FT.ob && X.obV[i] !== 0) vote('ob', X.obV[i] * 0.7, `Giá đang nằm trong Order Block ${X.obV[i] > 0 ? 'tăng (vùng cầu)' : 'giảm (vùng cung)'} chưa bị lấp`);
@@ -1073,7 +1061,7 @@ function analyze(C, opts) {
   return votes;
   };
   const votes = votesAt(n - 1, fsNow);
-  const MAXV = { ichi: 1, macd: 1, kdj: 1, srsi: 1, bb: 0.5, fib: 1, trend: 1, vwap: 0.6, frvp: 0.8, div: 1, ob: 0.7, fvg: 0.7 };
+  const MAXV = { ichi: 1, macd: 1, kdj: 1, srsi: 1, bb: 0.5, fib: 1, trend: 1, vwap: 0.6, kal: 1, div: 1, ob: 0.7, fvg: 0.7 };
   const bias = votes.reduce((a, x) => a + x.v, 0), maxB = votes.reduce((a, x) => a + MAXV[x.type], 0) || 1;
   const dir = bias >= 0.25 * maxB ? 'buy' : bias <= -0.25 * maxB ? 'sell' : 'wait';
   const pct = Math.round(Math.min(100, Math.abs(bias) / maxB * 100));
@@ -1088,7 +1076,7 @@ function analyze(C, opts) {
   } else if (dir !== 'wait') fc.dir = 'wait';
 
   const fcAt = i => { const vs = votesAt(i, fibSwing(zz.piv, i, ind.atr[i])); const b = vs.reduce((a, x) => a + x.v, 0), m = vs.reduce((a, x) => a + MAXV[x.type], 0) || 1, nr = b / m; return { dir: nr >= 0.25 ? 'buy' : nr <= -0.25 ? 'sell' : 'wait', norm: nr, pct: Math.round(Math.min(100, Math.abs(nr) * 100)) }; };
-  return { C, ind, signals, stats, now, zonesNow, zz, ew, ewLast, n, fc, fib: fsNow, fcAt, ext: X };
+  return { C, ind, signals, stats, now, zonesNow, zz, ew, ewLast, n, fc, fib: fsNow, fcAt, ext: X, frvp: frvpTrend(zz.piv, h, l, v, ind.atr, n) };
 }
 
 /* ---------- Dữ liệu mô phỏng khi không gọi được Binance ---------- */
@@ -1238,9 +1226,9 @@ if (typeof module !== 'undefined') module.exports = { analyze, genDemo, fmt, sma
 'use strict';
 const $=id=>document.getElementById(id);
 const TFS={'15m':900000,'1h':3600000,'4h':14400000,'1d':86400000};
-const LAYERS=[['fc','Dự báo'],['sig','Tín hiệu quá khứ'],['ichi','Ichimoku'],['fib','Fibonacci'],['zones','Vùng giá'],['bb','Bollinger'],['kal','Kalman'],['ema','EMA 50/200'],['macd','MACD'],['srsi','StochRSI']];
+const LAYERS=[['fc','Dự báo'],['sig','Tín hiệu quá khứ'],['ichi','Ichimoku'],['fib','Fibonacci'],['zones','Vùng giá'],['bb','Bollinger'],['kal','Kalman'],['frvp','FRVP'],['ema','EMA 50/200'],['macd','MACD'],['srsi','StochRSI']];
 const COL={buy:'#0E8A6D',sell:'#C93A52',zone:'#C98A0B',wave:'#4B46B8',ink:'#17222D',mut:'#5B6B7A',line:'#DDE4EA',blue:'#2F7DBE',orange:'#D9822B',purple:'#9B3FA0',ema200:'#8A5A9E'};
-const S={tab:'chart',tf:'4h',sym:'BTCUSDT',L:{fc:1,ichi:1,fib:1,sig:1,zones:1,bb:1,kal:0,ema:0,macd:1,srsi:1},mode:'spot',ft:{vwap:1,frvp:1,frMode:'swing',div:1,ob:1,fvg:1},rrT:2,minRR:1.5,scanAt:0,oppKeys:{},srTf:'1h',srFilter:'all',srRows:[],srBusy:false,srTok:0,srAt:0,srMk:'',srCache:{},caches:{coin:new Map(),stock:new Map(),fx:new Map(),bstock:new Map()},tops:{coin:null,stock:null,fx:null,bstock:null},mkt:'coin',saved:{},scanTok:0,cur:null,selSig:null,selBar:null,
+const S={tab:'chart',tf:'4h',sym:'BTCUSDT',L:{fc:1,ichi:1,fib:1,sig:1,zones:1,bb:1,kal:0,frvp:1,ema:0,macd:1,srsi:1},mode:'spot',ft:{vwap:1,kal:1,div:1,ob:1,fvg:1},rrT:2,minRR:1.5,scanAt:0,oppKeys:{},srTf:'1h',srFilter:'all',srRows:[],srBusy:false,srTok:0,srAt:0,srMk:'',srCache:{},caches:{coin:new Map(),stock:new Map(),fx:new Map(),bstock:new Map()},tops:{coin:null,stock:null,fx:null,bstock:null},mkt:'coin',saved:{},scanTok:0,cur:null,selSig:null,selBar:null,
   scan:[],filter:'all',onlyPos:false,scanning:false,scannedTf:null,hits:[],live:{},lastV:{},mtfLive:null,mtfClosed:null};
 Object.defineProperty(S,'cache',{get(){return S.caches[S.mkt];}});
 Object.defineProperty(S,'top',{get(){return S.tops[S.mkt];},set(v){S.tops[S.mkt]=v;}});
@@ -1491,6 +1479,23 @@ function draw(){
     }
     g.restore();
   }
+  // FRVP: histogram khối lượng của nhịp xu hướng hiện tại, đường POC (điểm cân bằng), VAH và VAL. Chỉ để xem, không tính điểm.
+  if(S.L.frvp&&A.frvp){
+    const fr=A.frvp,mx=Math.max.apply(null,fr.vol)||1,xa=Math.max(0,x(fr.a)),mw=Math.min(130,plotW*0.25);
+    g.save();
+    for(let b=0;b<fr.NB;b++){
+      const e1=fr.lo+(b+1)*fr.bs,e0=fr.lo+b*fr.bs,y1=py(e1),y2=py(e0);if(y2<0||y1>priceH) continue;
+      g.fillStyle=b===fr.pocB?'rgba(217,130,43,.45)':(e1>fr.val+1e-9&&e0<fr.vah-1e-9)?'rgba(75,70,184,.22)':'rgba(91,107,122,.16)';
+      g.fillRect(xa,y1,fr.vol[b]/mx*mw,Math.max(1,y2-y1-1));
+    }
+    g.font='11px sans-serif';g.textBaseline='bottom';g.textAlign='right';
+    for(const [p,lab,col,dash] of [[fr.poc,'POC','#D9822B',false],[fr.vah,'VAH','#4B46B8',true],[fr.val,'VAL','#4B46B8',true]]){
+      const y=py(p);g.strokeStyle=col;g.lineWidth=lab==='POC'?1.6:1.2;g.setLineDash(dash?[6,3]:[]);g.beginPath();g.moveTo(xa,y);g.lineTo(plotW,y);g.stroke();g.setLineDash([]);
+      g.fillStyle=col;g.fillText(lab+' '+fmt(p),plotW-4,y-2);
+    }
+    g.fillStyle='#4B46B8';g.textAlign='left';g.textBaseline='top';g.fillText('FRVP '+(fr.tr>0?'nhịp tăng':'nhịp giảm'),xa+4,4);
+    g.restore();
+  }
   // Ichimoku: mây (kéo dài 26 nến về tương lai), Tenkan, Kijun
   if(S.L.ichi){
     const iE=Math.min(n+25,Math.ceil(V.end)),A_=ind.spanA,B_=ind.spanB;
@@ -1546,20 +1551,6 @@ function draw(){
       g.fillStyle=bu?'rgba(14,138,109,.13)':'rgba(201,58,82,.13)';g.fillRect(xa,ya,w,hh);
       g.strokeStyle=bu?'rgba(14,138,109,.55)':'rgba(201,58,82,.55)';g.lineWidth=1;g.strokeRect(xa,ya,w,hh);
       g.fillStyle=COL.mut;g.font='11px sans-serif';g.fillText(lab,Math.max(xa+2,2),ya-2);g.font='12px "Be Vietnam Pro",system-ui,sans-serif';};
-    if(S.ft.frvp&&ex.frLast){g.save();
-      const fr=ex.frLast,mx=Math.max.apply(null,fr.vol)||1,xa=Math.max(0,x(fr.a)),mw=Math.min(130,plotW*0.25);
-      for(let b=0;b<fr.NB;b++){
-        const e1=fr.lo+(b+1)*fr.bs,e0=fr.lo+b*fr.bs,y1=py(e1),y2=py(e0);if(y2<0||y1>priceH) continue;
-        g.fillStyle=b===fr.pocB?'rgba(217,130,43,.45)':(e1>fr.val+1e-9&&e0<fr.vah-1e-9)?'rgba(75,70,184,.22)':'rgba(91,107,122,.16)';
-        g.fillRect(xa,y1,fr.vol[b]/mx*mw,Math.max(1,y2-y1-1));
-      }
-      g.font='11px sans-serif';g.textBaseline='bottom';g.textAlign='right';
-      for(const [p,lab,col,dash] of [[fr.poc,'POC','#D9822B',false],[fr.vah,'VAH','#4B46B8',true],[fr.val,'VAL','#4B46B8',true]]){
-        const y=py(p);g.strokeStyle=col;g.lineWidth=lab==='POC'?1.6:1.2;g.setLineDash(dash?[6,3]:[]);g.beginPath();g.moveTo(xa,y);g.lineTo(plotW,y);g.stroke();g.setLineDash([]);
-        g.fillStyle=col;g.fillText(lab+' '+fmt(p),plotW-4,y-2);
-      }
-      g.fillStyle='#4B46B8';g.textAlign='left';g.textBaseline='top';g.fillText('FRVP '+(fr.tr>0?'nhịp tăng':fr.tr<0?'nhịp giảm':'cực trị→nay'),xa+4,4);
-      g.restore();}
     if(S.ft.ob) for(const z of ex.obs) zr(z,z.k,'OB');
     if(S.ft.fvg) for(const z of ex.fvgs) zr(z,z.i0-2,'FVG');
     if(S.ft.div) for(const d of ex.divs){if(d.i<i0||d.j1>i1) continue;
@@ -1974,15 +1965,6 @@ async function posEval(p){
       }
     }
     if(zn) W(1,`Giá ${zn.d===0?'đang ở trong':'sát'} vùng ${sg>0?'cản':'đỡ'} ${fmt(zn.z.lo)}–${fmt(zn.z.hi)} trên 1h`);
-    const fr=E['1h'].A.ext.frLast;
-    if(fr){
-      let bf=null;
-      for(const [lv,nl] of [[fr.poc,'POC'],[fr.vah,'VAH'],[fr.val,'VAL']]){
-        const d=(sg>0?lv-P:P-lv)/r0;
-        if(d>=-0.05&&d<=0.4&&(sg>0?(lv>p.entry&&lv<p.tp):(lv<p.entry&&lv>p.tp))&&(!bf||d<bf.d)) bf={lv,nl,d};
-      }
-      if(bf) W(1,`Giá sát ${bf.nl} của FRVP 1h (${fmt(bf.lv)}), dễ gặp lực ${sg>0?'bán':'mua'}`);
-    }
   }
   const mfe0=Math.max(m0,sg*(pk-p.entry)/r0);
   if(mfe0>=1&&mfe0-m0>=0.6) W(1.5,`Giá đã trả lại ${(mfe0-m0).toFixed(1)}R từ đỉnh (+${mfe0.toFixed(1)}R)`);
@@ -2139,15 +2121,15 @@ function renderPos(){
       <p class="note">Cột Đỉnh là mức lãi cao nhất lệnh từng đạt: nếu Đỉnh thường cao hơn Kết quả nhiều, bạn đang chốt quá muộn hoặc kéo SL quá chậm.</p></div>`;
   }
   h+=`<details class="card" style="margin-top:12px"><summary style="cursor:pointer;font-weight:700">Cách app gợi ý giữ, kéo SL hay chốt sớm</summary>
-    <p class="note">Mỗi lần kiểm tra, app cộng điểm cảnh báo khi thị trường có dấu hiệu đổi hướng ngược lệnh: 1 ngày và 4h quay ngược (nặng nhất), 1h quay ngược hoặc mất hướng, 15m quay ngược, MACD yếu dần, StochRSI quay đầu ở vùng quá mua/quá bán, phân kỳ RSI/MACD, giá chạm Order Block ngược hướng hoặc sát vùng cản/đỡ và POC/VAH/VAL của FRVP trên 1h, giá đã trả lại hơn 0,6R từ đỉnh, lệnh mở quá 60 giờ.</p>
+    <p class="note">Mỗi lần kiểm tra, app cộng điểm cảnh báo khi thị trường có dấu hiệu đổi hướng ngược lệnh: 1 ngày và 4h quay ngược (nặng nhất), 1h quay ngược hoặc mất hướng, 15m quay ngược, MACD yếu dần, StochRSI quay đầu ở vùng quá mua/quá bán, phân kỳ RSI/MACD, giá chạm Order Block ngược hướng hoặc sát vùng cản/đỡ 1h, giá đã trả lại hơn 0,6R từ đỉnh, lệnh mở quá 60 giờ.</p>
     <p class="note"><b>Dưới 1,5 điểm:</b> giữ. Khi lệnh chạy được +1R thì gợi ý dời SL về hòa vốn (đã trừ phí), từ +1,5R thì kéo SL theo đỉnh trừ 1,5 ATR(1h) (siết còn 1 ATR nếu đã có cảnh báo).<br><b>1,5 đến dưới 3 điểm:</b> đang lãi từ +0,5R thì chốt khoảng một nửa và kéo SL, chưa lãi thì theo dõi sát.<br><b>Từ 3 điểm:</b> đang lãi thì chốt phần lớn hoặc hết, chưa lãi thì cân nhắc cắt sớm thay vì chờ chạm SL.</p>
     <p class="note">Đánh giá dùng nến đã đóng của 4 khung cùng giá hiện tại trên sàn, nên một nến đang chạy chưa làm đổi kết luận. Chạm SL/TP được dò theo nến 15m đã đóng nên có thể trễ tối đa 15 phút. Các ngưỡng điểm là quy tắc kinh nghiệm, chưa được backtest; đây là công cụ hỗ trợ, không phải lời khuyên đầu tư, quyết định cuối cùng và mức SL thực tế đặt trên sàn là của bạn.</p></details>`;
   host.innerHTML=h;
 }
 
-/* ---------- So sánh cách neo FRVP: cùng dữ liệu, cùng quy tắc vào lệnh đủ 4 khung, chỉ đổi cách tính FRVP ---------- */
-const FR_VARS=[['off','Không dùng FRVP',{frvp:0}],['cur','Cũ: cực trị 200 nến → nay',{frvp:1,frMode:'cur'}],['swing','Đáy→đỉnh nhịp',{frvp:1,frMode:'swing'}],['now','Đầu nhịp → nay',{frvp:1,frMode:'now'}]];
-async function btFr(sym,mk,fut,prog){
+/* ---------- So sánh bật/tắt Kalman: cùng dữ liệu, cùng quy tắc vào lệnh đủ 4 khung, chỉ đổi việc Kalman có tính điểm hay không ---------- */
+const CMP_VARS=[['off','Tắt Kalman',{kal:0}],['on','Bật Kalman',{kal:1}]];
+async function btCmp(sym,mk,fut,prog){
   const D={},ord=mtfOf(mk),BP=MKT[mk].btPages||BT_PAGES;
   await Promise.all(ord.map(async tf=>{D[tf]=await loadDeep(sym,tf,BP[tf],mk);}));
   for(const tf of ord) if(D[tf].length<MKT[mk].minBars) throw new Error('ít dữ liệu '+tf);
@@ -2156,7 +2138,7 @@ async function btFr(sym,mk,fut,prog){
   let w0=-1;for(let i=250;i<n;i++){ if(C[i].ct>=startCt){w0=i;break;} }
   if(w0<0||n-w0<200) throw new Error('cửa sổ ngắn');
   const lateFrom=w0+Math.floor(0.7*(n-w0)),out={days:Math.round((C[n-1].ct-C[w0].t)/86400000)};
-  for(const [key,,ft] of FR_VARS){
+  for(const [key,,ft] of CMP_VARS){
     if(prog) prog(key);
     const A={};for(const tf of ord){A[tf]=analyze(D[tf],{ft});await tick();}
     const atr=A['1h'].ind.atr,ptr={'1d':0,'4h':0,'15m':0},res=[];let last=-99,prev='';
@@ -2181,48 +2163,47 @@ async function btFr(sym,mk,fut,prog){
   }
   return out;
 }
-async function runFrBt(){
-  if(S.frBusy||S.mtfBusy) return;
-  S.frBusy=true;const mk=S.mkt,fut=FUT();netReset(mk);let lastErr='';
-  const b0=$('frBtBtn');if(b0){b0.classList.add('busy');b0.textContent='Đang so sánh cách neo FRVP…';}
+async function runCmp(){
+  if(S.cmpBusy||S.mtfBusy) return;
+  S.cmpBusy=true;const mk=S.mkt,fut=FUT();netReset(mk);let lastErr='';
+  const b0=$('cmpBtBtn');if(b0){b0.classList.add('busy');b0.textContent='Đang so sánh bật/tắt Kalman…';}
   try{
-    const coins=(await loadTop(6,mk)).map(t=>t.sym),agg={v:{off:[],cur:[],swing:[],now:[]},coins:[],days:0,fut,mk};
+    const coins=(await loadTop(6,mk)).map(t=>t.sym),agg={v:{off:[],on:[]},coins:[],days:0,fut,mk};
     for(let k=0;k<coins.length;k++){
-      const say=key=>{const hh=$('frBt');if(hh) hh.innerHTML=`<p class="note">Đang chạy ${k+1}/${coins.length}: ${coins[k].replace('USDT','')}, bản "${(FR_VARS.find(x=>x[0]===key)||[])[1]||''}". Mỗi coin mất khoảng nửa phút đến vài phút, vui lòng giữ trang mở.</p>`;};
+      const say=key=>{const hh=$('cmpBt');if(hh) hh.innerHTML=`<p class="note">Đang chạy ${k+1}/${coins.length}: ${coins[k].replace('USDT','')}, bản "${(CMP_VARS.find(x=>x[0]===key)||[])[1]||''}". Mỗi coin mất khoảng nửa phút đến vài phút, vui lòng giữ trang mở.</p>`;};
       try{
-        const r=await btFr(coins[k],mk,fut,say);
-        for(const [key] of FR_VARS) agg.v[key].push(...r[key]);
+        const r=await btCmp(coins[k],mk,fut,say);
+        for(const [key] of CMP_VARS) agg.v[key].push(...r[key]);
         agg.coins.push(coins[k].replace('USDT',''));agg.days=Math.max(agg.days,r.days);
       }catch(e){ if(!agg.coins.length) lastErr=e&&e.message||''; }
     }
-    S.frBt=agg.coins.length?agg:{err:'Không chạy được so sánh'+(lastErr?' ('+lastErr+')':'')+'. Thử lại bằng Chrome hoặc Safari, hoặc kiểm tra mạng.',mk,fut};
-  }catch(e){ S.frBt={err:'Không chạy được so sánh: '+(e&&e.message||'lỗi'),mk,fut}; }
-  S.frBusy=false;
-  const b1=$('frBtBtn');if(b1){b1.classList.remove('busy');b1.textContent='Chạy lại so sánh cách neo FRVP';}
-  renderFrBt();
+    S.cmpBt=agg.coins.length?agg:{err:'Không chạy được so sánh'+(lastErr?' ('+lastErr+')':'')+'. Thử lại bằng Chrome hoặc Safari, hoặc kiểm tra mạng.',mk,fut};
+  }catch(e){ S.cmpBt={err:'Không chạy được so sánh: '+(e&&e.message||'lỗi'),mk,fut}; }
+  S.cmpBusy=false;
+  const b1=$('cmpBtBtn');if(b1){b1.classList.remove('busy');b1.textContent='Chạy lại so sánh bật/tắt Kalman';}
+  renderCmp();
 }
-function renderFrBt(){
-  const r=S.frBt,host=$('frBt');if(!host||!r) return;
+function renderCmp(){
+  const r=S.cmpBt,host=$('cmpBt');if(!host||!r) return;
   if(r.mk!==S.mkt||r.fut!==FUT()){host.innerHTML='';return;}
   if(r.err){host.innerHTML=`<p class="note">${r.err}</p>`;return;}
   const row=(name,t)=>{const st=calcStats(t),ol=calcStats(t.filter(x=>x.late));
     return `<tr><td style="width:auto">${name}</td><td class="r">${st.n}</td><td class="r">${st.n?(st.wr*100).toFixed(0)+'%':'–'}</td><td class="r ${st.n&&st.exp>0?'up':'dn'}">${st.n?R2(st.exp):'–'}</td><td class="r">${st.n?(isFinite(st.pf)?st.pf.toFixed(2):'∞'):'–'}</td><td class="r">${ol.n?R2(ol.exp):'–'}</td></tr>`;};
-  const st={};for(const [k] of FR_VARS) st[k]=calcStats(r.v[k]);
-  const off=st.off,cand=['cur','swing','now'].map(k=>[k,st[k]]).filter(([,x])=>x.n>=20).sort((a,b)=>b[1].exp-a[1].exp)[0];
+  const off=calcStats(r.v.off),on=calcStats(r.v.on);
   let msg;
-  if(off.n<20||!cand) msg='Số lệnh còn ít (dưới 20 ở một số bản) nên chưa so sánh được. Mẫu nhỏ rất dễ cho kết quả đẹp hoặc xấu do may rủi.';
+  if(off.n<20||on.n<20) msg='Số lệnh còn ít (dưới 20 ở một bản) nên chưa so sánh được. Mẫu nhỏ rất dễ cho kết quả đẹp hoặc xấu do may rủi.';
   else{
-    const nm=(FR_VARS.find(x=>x[0]===cand[0])||[])[1],d=cand[1].exp-off.exp;
-    msg=d>0.1
-      ?`Kiểu "${nm}" cho kỳ vọng ${R2(cand[1].exp)} mỗi lệnh, hơn bản tắt FRVP (${R2(off.exp)}) khoảng ${d.toFixed(2)}R, với ${cand[1].n} so với ${off.n} lệnh. Xem thêm cột 30% mới nhất có còn dương không trước khi tin.`
-      :`Chưa có cách neo nào hơn rõ rệt bản tắt FRVP (${R2(off.exp)}): tốt nhất là "${nm}" với ${R2(cand[1].exp)}, chênh dưới 0,1R mỗi lệnh. Chưa có lý do để giữ FRVP trong điều kiện này.`;
-    if(Math.max(off.n,cand[1].n)<60) msg+=' Dưới 60 lệnh nên chênh lệch nhỏ vẫn có thể chỉ do may rủi.';
+    const d=on.exp-off.exp;
+    msg=d>0.1?`Bật Kalman cho kỳ vọng ${R2(on.exp)} mỗi lệnh, hơn tắt (${R2(off.exp)}) khoảng ${d.toFixed(2)}R, với ${on.n} so với ${off.n} lệnh. Xem thêm cột 30% mới nhất có còn dương không trước khi tin.`
+      :d<-0.1?`Bật Kalman làm kỳ vọng giảm còn ${R2(on.exp)} so với ${R2(off.exp)} khi tắt (kém ${(-d).toFixed(2)}R mỗi lệnh). Trong điều kiện này nên tắt Kalman khỏi phần tính điểm.`
+      :`Chưa có khác biệt rõ rệt: bật Kalman ${R2(on.exp)}, tắt ${R2(off.exp)}, chênh dưới 0,1R mỗi lệnh.`;
+    if(Math.max(off.n,on.n)<60) msg+=' Dưới 60 lệnh nên chênh lệch nhỏ vẫn có thể chỉ do may rủi.';
   }
-  host.innerHTML=`<p style="margin:10px 0 4px"><b>So sánh cách neo FRVP</b> <span class="mut">${r.coins.join(', ')}, khoảng ${r.days} ngày, quy tắc vào lệnh đủ 4 khung</span></p>
+  host.innerHTML=`<p style="margin:10px 0 4px"><b>So sánh bật/tắt Kalman</b> <span class="mut">${r.coins.join(', ')}, khoảng ${r.days} ngày, quy tắc vào lệnh đủ 4 khung</span></p>
     <table style="font-size:13px"><tr class="mut"><td style="width:auto"></td><td class="r">Lệnh</td><td class="r">Thắng</td><td class="r">Kỳ vọng</td><td class="r">PF</td><td class="r">30% mới</td></tr>
-    ${FR_VARS.map(([k,t])=>row(t,r.v[k])).join('')}</table>
+    ${CMP_VARS.map(([k,t])=>row(t,r.v[k])).join('')}</table>
     <p style="font-size:14px;margin:8px 0 4px">${msg}</p>
-    <p class="note">Mỗi dòng là một lần chạy riêng với cùng dữ liệu, cùng cắt lỗ 1,5 ATR(1h), chốt lời ${(+globalThis.__rrT||2)}R, chỉ khác cách tính FRVP. Phí giả định theo thị trường, chưa tính funding. Các bộ lọc khác (VWAP, phân kỳ, Order Block, FVG) theo cài đặt hiện tại.</p>`;
+    <p class="note">Mỗi dòng là một lần chạy riêng với cùng dữ liệu, cùng cắt lỗ 1,5 ATR(1h), chốt lời ${(+globalThis.__rrT||2)}R, chỉ khác việc Kalman có tính điểm hay không. Phí giả định theo thị trường, chưa tính funding. Các bộ lọc khác (VWAP, phân kỳ, Order Block, FVG) theo cài đặt hiện tại.</p>`;
 }
 
 /* ---------- Tab StochRSI: lọc nhanh nhiều mã theo StochRSI (nến đã đóng), bấm vào mã để xem chi tiết ---------- */
@@ -2326,6 +2307,13 @@ function srClick(e){
   }
 }
 
+function frNote(A){
+  const fr=A.frvp;
+  if(!fr) return '<p class="note"><b>FRVP (điểm cân bằng theo xu hướng):</b> khung này chưa có xu hướng rõ (đi ngang hoặc nhịp quá nhỏ) nên chưa có profile. Chỉ để xem, không tính vào điểm.</p>';
+  const last=A.C[A.n-1].c,d=(last/fr.poc-1)*100,up=fr.tr>0;
+  const pos=last>fr.vah?'đang trên vùng giá trị':last<fr.val?'đang dưới vùng giá trị':'đang trong vùng giá trị';
+  return `<p class="note"><b>FRVP, điểm cân bằng của ${up?'nhịp tăng':'nhịp giảm'}</b> (${fmt(fr.lo)} đến ${fmt(fr.hi)}, ${fr.e-fr.a+1} nến): POC <b>${fmt(fr.poc)}</b>, vùng giá trị <b>${fmt(fr.val)}</b> đến <b>${fmt(fr.vah)}</b>. Giá hiện tại ${pos}, ${d>=0?'cao hơn':'thấp hơn'} POC ${Math.abs(d).toFixed(1)}%. Trong ${up?'nhịp tăng POC và VAL':'nhịp giảm POC và VAH'} thường là vùng để canh giá hồi về. Chỉ để tham khảo, không tính vào điểm.</p>`;
+}
 async function renderMTF(){
   const el=$('mtf');if(!el) return;
   const sym=S.sym,tok=++mtfTok;
@@ -2342,6 +2330,12 @@ async function renderMTF(){
     const r=R[tf],mark=want?(r.dir===want?'<span class="ok">✓</span>':'<span class="no">✗</span>'):'';
     return `<tr><td>${tf}</td><td class="mut">${MTF_ROLE[tf]}</td><td><span class="pill ${r.dir==='buy'?'buy':r.dir==='sell'?'sell':'wait'}">${dirTxt(r.dir)}</span></td><td class="r">${r.pct}/100 ${mark}</td></tr>`;
   }).join('');
+  const frRows=ord.map(tf=>{
+    const A=R[tf].ent.A,fr=A.frvp,last=A.C[A.n-1].c;
+    if(!fr) return `<tr><td>${tf}</td><td class="mut" colspan="4">chưa có xu hướng rõ</td></tr>`;
+    const d=(last/fr.poc-1)*100;
+    return `<tr><td>${tf}</td><td><span class="pill ${fr.tr>0?'buy':'sell'}">${fr.tr>0?'Nhịp tăng':'Nhịp giảm'}</span></td><td class="r">${fmt(fr.poc)}</td><td class="r">${fmt(fr.val)}–${fmt(fr.vah)}</td><td class="r ${d>=0?'up':'dn'}">${d>=0?'+':''}${d.toFixed(1)}%</td></tr>`;
+  }).join('');
   const isReady=rdy(v);
   let anchor=null;
   if(isReady){const em={};ord.forEach((tf,i)=>{em[tf]=ents[i];});try{anchor=mtfAnchor(ord,em,192,true,v.side,FUT());}catch(e){anchor=null;}}
@@ -2354,14 +2348,17 @@ async function renderMTF(){
     <div class="kv" style="margin-top:6px"><span class="mut">Điểm đa khung (−100 đến +100)</span><b>${v.score>0?'+':''}${Math.round(v.score*100)}</b></div>
     <div id="mtfValid"></div>
     <table>${rows}</table>
+    <p style="margin:12px 0 2px;font-size:14px"><b>Điểm cân bằng theo từng khung (FRVP)</b></p>
+    <div class="sc"><table style="font-size:13px"><tr class="mut"><td>Khung</td><td>Xu hướng</td><td class="r">POC</td><td class="r">Vùng giá trị</td><td class="r">Giá so POC</td></tr>${frRows}</table></div>
+    <p class="note">FRVP là profile khối lượng của nhịp xu hướng hiện tại trên từng khung. Chỉ để tham khảo, không tính vào điểm hay kết luận.</p>
     <p class="note">Quy tắc: 1 ngày và 4h quyết định hướng, 1h xác nhận, 15m chọn điểm vào. Điểm vào là giá đóng nến 15m đầu tiên đủ điều kiện, giá hiện tại cho biết còn vào được hay đã trễ. Hai khung lớn ngược nhau thì luôn là CHỜ. Tính trên nến đã đóng; chỉ là xác suất, luôn đặt cắt lỗ.${FUT()?' Chế độ Futures: LONG và SHORT dùng cùng điều kiện đối xứng. Backtest chưa tính funding và rủi ro thanh lý, hãy dùng máy tính vị thế để chọn đòn bẩy.':''}${S.mkt==='bstock'?' Đây là hợp đồng vĩnh viễn TradFi của Bybit (cổ phiếu, vàng, bạc, dầu…): giá tổng hợp, giao dịch 24/7, có phí funding, có thể lệch giá thật ngoài giờ giao dịch của thị trường gốc. Với dầu thô, giá bám hợp đồng tương lai nên có thể có bước nhảy khi chuyển kỳ hạn. Nếu dùng đòn bẩy, hãy tính khoảng cách tới giá thanh lý trước khi đặt cắt lỗ.':''}${S.mkt==='fx'?' Đây là giá hợp đồng vĩnh viễn forex trên Bybit (tổng hợp, giao dịch 24/7, có phí funding), có thể lệch giá forex thật, nhất là cuối tuần. Hợp đồng mới ra mắt 8/9/2026 nên chưa có khung 1 ngày, kết luận dựa trên 4h, 1h và 15m. Đòn bẩy cao dễ chạm giá thanh lý, hãy tính trước khoảng cách này.':''}${S.mkt==='stock'?' Đây là giá hợp đồng vĩnh viễn trên Binance Futures: giao dịch 24/7, có phí funding mỗi 8 giờ và có thể lệch giá cổ phiếu thật ngoài giờ Mỹ. Nếu dùng đòn bẩy, hãy tính khoảng cách tới giá thanh lý trước khi đặt cắt lỗ.':''}${demo?' Đang dùng dữ liệu mô phỏng nên kết luận này chưa có giá trị.':''}</p>
     <button class="go" id="mtfBtBtn" style="width:100%;margin-top:10px">${S.mtfBt&&!S.mtfBt.err?'Chạy lại backtest đa khung':'Chạy backtest đa khung (6 coin lớn, ~4 tháng)'}</button>
     <div id="mtfBt"></div>
-    <button class="go" id="frBtBtn" style="width:100%;margin-top:8px;background:#4B46B8">So sánh cách neo FRVP bằng backtest (chậm hơn, 6 coin)</button>
-    <div id="frBt"></div>
+    <button class="go" id="cmpBtBtn" style="width:100%;margin-top:8px;background:#4B46B8">So sánh bật/tắt Kalman bằng backtest (6 coin)</button>
+    <div id="cmpBt"></div>
   </div>`;
   const bb=$('mtfBtBtn');if(bb) bb.onclick=runMtfBt;
-  const fb=$('frBtBtn');if(fb) fb.onclick=runFrBt;renderFrBt();
+  const fb=$('cmpBtBtn');if(fb) fb.onclick=runCmp;renderCmp();
   renderMtfBt();
   {const e1=R['1h'].ent,e15=R['15m']?R['15m'].ent:e1,lc=e15.C[e15.C.length-1],lv15=S.live[sym+'|15m'];
    S.lv={sym,side:v.side==='sell'?'sell':'buy',px:lv15&&lv15.t>lc.t?lv15.c:lc.c,atr:e1.A.ind.atr[e1.A.n-1]};}
@@ -2590,6 +2587,7 @@ function renderAside(){
       <span>Mục tiêu 2</span><span class="up">${fmt(fc.tp2)}</span><span>${fc.tp2Src}</span>
       <span>Cắt lỗ nếu sai</span><span class="dn">${fmt(fc.sl)}</span><span>${fc.slPct.toFixed(2)}%</span></div>`:''}
     <p class="note">Kịch bản cho khoảng ${fc.horizon} nến tới (~${hz}). Đây là ước tính từ trạng thái hiện tại của các chỉ báo, chưa phải kết quả đã xảy ra; giá có thể đi ngược dự báo nên luôn cần cắt lỗ.${fc.confirmed?' Các nến gần nhất còn có điểm vào đồng thuận cùng hướng.':''}</p>
+    ${frNote(A)}
     <b>Các chỉ báo đang nghiêng thế nào</b>
     <ul class="why">${fc.votes.map(v=>`<li><span class="pts ${v.v<0?'m':'p'}">${v.v>0?'+':''}${v.v.toFixed(1)}</span><span><span class="tg">${TYPE_LABEL[v.type]}</span>${v.txt}</span></li>`).join('')}</ul>
     <div class="total"><span>Tổng độ nghiêng</span><span>${fc.bias>0?'+':''}${fc.bias.toFixed(1)} / ${fc.max.toFixed(1)}</span></div>
@@ -2817,19 +2815,13 @@ function setTf(tf){
   S.tf=tf;tfButtons($('tfChart'));tfButtons($('tfScan'));
   if(S.tab==='chart') showChart(); else if(S.tab==='scan') runScan();
 }
-const FT_LIST=[['vwap','VWAP'],['frvp','FRVP'],['div','Phân kỳ RSI/MACD'],['ob','Order Block'],['fvg','FVG']];
-const FR_MODES=[['swing','Đáy→đỉnh nhịp'],['now','Đầu nhịp→nay'],['cur','Cũ: cực trị 200 nến']];
+const FT_LIST=[['vwap','VWAP'],['kal','Kalman'],['div','Phân kỳ RSI/MACD'],['ob','Order Block'],['fvg','FVG']];
 function buildFt(){
-  $('ftBar').innerHTML='<span class="mut" style="font-size:13px">Bổ trợ (bật/tắt, tính vào điểm):</span>'+FT_LIST.map(([k,t])=>`<button class="chip sm" data-ft="${k}" aria-pressed="${!!S.ft[k]}">${t}</button>`).join('')
-   +'<span class="sep"></span><span class="mut" style="font-size:13px">Neo FRVP:</span>'+FR_MODES.map(([k,t])=>`<button class="chip sm" data-frm="${k}" aria-pressed="${(S.ft.frMode||'swing')===k}">${t}</button>`).join('');
-}
-function setFrMode(v){
-  S.ft.frMode=v;globalThis.__ft=S.ft;try{localStorage.setItem('ft',JSON.stringify(S.ft));}catch(e){}
-  buildFt();reAll();
+  $('ftBar').innerHTML='<span class="mut" style="font-size:13px">Bổ trợ (bật/tắt, tính vào điểm):</span>'+FT_LIST.map(([k,t])=>`<button class="chip sm" data-ft="${k}" aria-pressed="${!!S.ft[k]}">${t}</button>`).join('');
 }
 function reAll(){
   for(const mk in S.caches) for(const ent of S.caches[mk].values()){try{ent.A=analyze(ent.C);}catch(e){}}
-  S.selSig=null;S.lastV={};S.mtfLive=null;S.mtfBt=null;S.frBt=null;S.anchor=null;for(const m in S.saved) if(S.saved[m]) S.saved[m].mtfBt=null;
+  S.selSig=null;S.lastV={};S.mtfLive=null;S.mtfBt=null;S.cmpBt=null;S.anchor=null;for(const m in S.saved) if(S.saved[m]) S.saved[m].mtfBt=null;
   S.scan=[];S.scannedTf=null;
   if(S.tab==='scan') runScan();
   if(S.cur){renderAside();draw();}
@@ -2906,7 +2898,6 @@ function init(){
     if(b.dataset.tf){setTf(b.dataset.tf);}
     else if(b.dataset.layer){const k=b.dataset.layer;S.L[k]=S.L[k]?0:1;b.setAttribute('aria-pressed',!!S.L[k]);draw();}
     else if(b.dataset.ft){toggleFt(b.dataset.ft,b);}
-    else if(b.dataset.frm){setFrMode(b.dataset.frm);}
     else if(b.dataset.rrt){setRR('rrT',+b.dataset.rrt);}
     else if(b.dataset.minrr){setRR('minRR',+b.dataset.minrr);}
     else if(b.dataset.sig){const s=S.cur.A.signals.find(x=>x.i===+b.dataset.sig);if(s){S.selSig=s;S.selBar=s.i;centerOn(s.i);renderAside();draw();}}
@@ -2957,7 +2948,7 @@ function init(){
   showChart();
   if(POS.some(p=>p.st==='open')) setTimeout(posRefresh,3000);
 }
-window.__app={btFr,runFrBt,posAdvise,posEval,POS:()=>POS,paintValid,S,V,draw,load,runScan,showChart,renderAside,renderScan,tap};
+window.__app={btCmp,runCmp,posAdvise,posEval,POS:()=>POS,paintValid,S,V,draw,load,runScan,showChart,renderAside,renderScan,tap};
 init();
 })();
 </script>
