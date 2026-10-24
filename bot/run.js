@@ -9,7 +9,7 @@
  * Biến môi trường: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (không bắt buộc, thiếu thì chỉ ghi dữ liệu).
  * Chế độ: trong config.json đặt "mode": "futures" để bot báo cả LONG và SHORT.
  *          Bỏ trống hoặc "spot" thì giữ như cũ, chỉ báo điểm MUA.
- * Bộ lọc bổ trợ VWAP / FRVP / phân kỳ RSI-MACD / Order Block / FVG mặc định bật; tắt từng cái bằng "filters": {"vwap":0,"frvp":0,"div":0,"ob":0,"fvg":0} trong config.json.
+ * Bộ lọc bổ trợ VWAP / FRVP / phân kỳ RSI-MACD / Order Block / FVG mặc định bật; tắt từng cái bằng "filters": {"vwap":0,"frvp":0,"div":0,"ob":0,"fvg":0} trong config.json. Cách neo FRVP: "frMode": "swing" (đáy→đỉnh nhịp, mặc định), "now" (đầu nhịp→nay) hoặc "cur" (kiểu cũ).
  * Công cụ phân tích, không phải lời khuyên đầu tư.
  */
 const fs = require('fs'), path = require('path'), vm = require('vm');
@@ -150,7 +150,7 @@ const arrow = d => d === 'buy' ? '▲' : d === 'sell' ? '▼' : '–';
 async function main() {
   const E = loadEngine();
   const cfg = JSON.parse(fs.readFileSync(CFG, 'utf8'));
-  E.setFilters(Object.assign({ vwap: 1, frvp: 1, div: 1, ob: 1, fvg: 1 }, cfg.filters || {}));   // bộ lọc bổ trợ, tắt bằng "filters": {"ob": 0} trong config.json
+  E.setFilters(Object.assign({ vwap: 1, frvp: 1, frMode: 'swing', div: 1, ob: 1, fvg: 1 }, cfg.filters || {}));   // bộ lọc bổ trợ, tắt bằng "filters": {"ob": 0} trong config.json
   fs.mkdirSync(DATA, { recursive: true });
   const sigFile = path.join(DATA, 'signals.json'), stFile = path.join(DATA, 'state.json');
   const log = readJSON(sigFile, { lastRun: 0, signals: [] }), state = readJSON(stFile, { v: {} });
