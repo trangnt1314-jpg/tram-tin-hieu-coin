@@ -7,13 +7,13 @@
    "side": "buy"
   },
   "coin:ETHUSDT": {
-   "txt": "TRÁNH MUA",
+   "txt": "CHỜ",
    "ready": false,
    "last": 0,
    "side": "buy"
   },
   "coin:SOLUSDT": {
-   "txt": "CHỜ",
+   "txt": "TRÁNH MUA",
    "ready": false,
    "last": 1792601388095,
    "side": "buy"
