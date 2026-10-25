@@ -51,7 +51,8 @@ main{padding:12px 16px 40px;max-width:1500px;margin:0 auto}
 canvas{display:block;width:100%;height:100%}
 .zoom{position:absolute;right:72px;top:8px;display:flex;gap:6px}
 .zoom button{width:36px;height:36px;border-radius:10px;border:1px solid var(--line);background:rgba(248,250,251,.92);font-size:20px;line-height:1}
-.aside{display:flex;flex-direction:column;gap:12px}
+.aside,.below,.colL{display:flex;flex-direction:column;gap:12px}
+.colL{min-width:0}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
 .card h3{margin:0 0 8px;font-size:15px;font-weight:700}
 .card p{margin:6px 0}
@@ -133,7 +134,10 @@ canvas{display:block;width:100%;height:100%}
 [hidden]{display:none!important}
 
 @media (max-width:1060px){
-  .grid{grid-template-columns:1fr}
+  /* điện thoại / màn hẹp: 1 cột, giữ thứ tự cũ: biểu đồ, kết luận đa khung, máy tính, dự báo, lý do, backtest, vùng giá, tín hiệu gần đây */
+  .grid{display:flex;flex-direction:column}
+  .colL,.below,.aside{display:contents}
+  .grid .o1{order:1} .grid .o2{order:2} .grid .o3{order:3} .grid .o4{order:4} .grid .o5{order:5} .grid .o6{order:6} .grid .o7{order:7}
   .chartWrap{height:64dvh;min-height:480px}
   .row{grid-template-columns:1fr;gap:6px}
 }
@@ -211,9 +215,12 @@ canvas{display:block;width:100%;height:100%}
     <div class="bar" id="layers"></div>
     <div class="bar" id="ftBar"></div>
     <div class="grid">
-      <div class="chartWrap" id="wrap">
-        <canvas id="cv"></canvas>
-        <div class="zoom"><button id="zOut" aria-label="Thu nhỏ">−</button><button id="zIn" aria-label="Phóng to">+</button></div>
+      <div class="colL">
+        <div class="chartWrap" id="wrap">
+          <canvas id="cv"></canvas>
+          <div class="zoom"><button id="zOut" aria-label="Thu nhỏ">−</button><button id="zIn" aria-label="Phóng to">+</button></div>
+        </div>
+        <div class="below" id="below"></div>
       </div>
       <div class="aside" id="aside"></div>
     </div>
@@ -253,7 +260,7 @@ canvas{display:block;width:100%;height:100%}
     <div id="posList"></div>
   </section>
 
-  <p class="foot">Công cụ hỗ trợ phân tích, không phải lời khuyên đầu tư. Dự báo gom từ MACD, StochRSI, VWAP, Kalman Trend Levels, phân kỳ RSI/MACD, FVG Order Blocks, Supertrend, Hull Suite, Bollinger, Ichimoku, vùng giá, volume và xu hướng EMA; đây là kịch bản ước tính cho các nến sắp tới, chưa xảy ra. Tín hiệu chỉ là xác suất, không có chỉ báo nào dự báo chắc chắn. Backtest giả định khớp lệnh tại giá đóng cửa nến tín hiệu, phí giả định theo từng thị trường (coin 0,1% mỗi chiều, cổ phiếu 0,05%, Bybit TradFi 0,06%, forex 0,03%), nếu cùng một nến chạm cả cắt lỗ và chốt lời thì tính là thua.</p>
+  <p class="foot">Công cụ hỗ trợ phân tích, không phải lời khuyên đầu tư. Dự báo gom từ MACD, StochRSI, VWAP, phân kỳ RSI/MACD, FVG Order Blocks, Supertrend, Hull Suite, Bollinger, Ichimoku, vùng giá, volume và xu hướng EMA; đây là kịch bản ước tính cho các nến sắp tới, chưa xảy ra. Tín hiệu chỉ là xác suất, không có chỉ báo nào dự báo chắc chắn. Backtest giả định khớp lệnh tại giá đóng cửa nến tín hiệu, phí giả định theo từng thị trường (coin 0,1% mỗi chiều, cổ phiếu 0,05%, Bybit TradFi 0,06%, forex 0,03%), nếu cùng một nến chạm cả cắt lỗ và chốt lời thì tính là thua.</p>
 </main>
 
 <script>
@@ -1210,133 +1217,6 @@ function frvpTrend(zzp, h, l, v, atrA, n) {
           for(let i=Math.max(0,i0);i<=e;i++){const v=arr[i];if(!isFinite(v)){st=false;continue;}if(!st){g.moveTo(x(i),py(v));st=true;}else g.lineTo(x(i),py(v));}
           g.stroke();
         }
-      }
-    }
-  });
-})();
-</script>
-<script>
-/* ======================================================================
-   Kalman Trend Levels (theo Pine của BigBeluga)
-   Cung cấp: ind.kalS (Kalman 50), ind.kalL (Kalman 150), ind.kal {boxes, flips}.
-   Layer "Kalman" trên chart chỉ bật/tắt hình vẽ; toggle "Kalman" ở thanh Bổ trợ bật/tắt việc tính vào điểm.
-   ====================================================================== */
-'use strict';
-/* ---------- Kalman Trend Levels (theo Pine của BigBeluga): bộ lọc Kalman 50 và 150 trên giá đóng cửa ---------- */
-function kalmanF(src, len) {
-  const n = src.length, out = NaNs(n), R = 0.01, Q = 0.1, em = R * len;
-  let est = NaN, ee = 1.0;
-  for (let i = 0; i < n; i++) {
-    if (isNaN(est) && i >= 1) est = src[i - 1];
-    const pred = est, gain = ee / (ee + em);
-    est = pred + gain * (src[i] - pred);
-    ee = (1 - gain) * ee + Q / len;
-    out[i] = est;
-  }
-  return out;
-}
-// Mỗi lần Kalman 50 cắt Kalman 150 là một đổi xu hướng. Cắt lên: hộp xanh từ đáy nến tới đáy + 0,5 ATR(200). Cắt xuống: hộp đỏ từ đỉnh nến trở xuống 0,5 ATR(200).
-// Hộp kéo dài sang phải cho tới lần đổi cùng loại kế tiếp, nên là vùng hỗ trợ (xanh) và kháng cự (đỏ) theo xu hướng.
-function kalmanLevels(ks, kl, h, l, atrA) {
-  const n = ks.length, boxes = [], flips = [];
-  let prev = null;
-  for (let i = 0; i < n; i++) {
-    if (!isFinite(ks[i]) || !isFinite(kl[i])) continue;
-    const tu = ks[i] > kl[i];
-    if (prev !== null && tu !== prev) {
-      const a = isFinite(atrA[i]) ? atrA[i] : 0;
-      flips.push({ i, up: tu });
-      boxes.push(tu ? { i0: i, i1: n - 1, top: l[i] + a, bot: l[i], up: true } : { i0: i, i1: n - 1, top: h[i], bot: h[i] - a, up: false });
-    }
-    prev = tu;
-  }
-  for (const up of [true, false]) {
-    const b = boxes.filter(x => x.up === up);
-    for (let k = 0; k + 1 < b.length; k++) b[k].i1 = b[k + 1].i0 - 1;
-  }
-  return { boxes, flips };
-}
-
-(function () {
-
-
-  Indicators.register({
-    id: 'kal', label: 'Kalman', maxVote: 1,
-    order: { calc: 60, all: 20, vote: 70, under: 30 },
-    layer: { key: 'kal', label: 'Kalman', on: 0, order: 50 },
-    toggle: { key: 'kal', label: 'Kalman', on: 1, order: 20 },
-    drawWhere: 'under',
-
-    calc({ h, l, c }) {
-      const kS = kalmanF(c, 50), kL = kalmanF(c, 150), a14 = atrW(h, l, c, 14), a200 = atrW(h, l, c, 200);
-      const kAtr = a200.map((x, i) => (isFinite(x) ? x : a14[i]) * 0.5);
-      return { kalS: kS, kalL: kL, kal: kalmanLevels(kS, kL, h, l, kAtr) };
-    },
-
-    signalAll(ctx, add) {
-      const { h, l, n, ind, FT } = ctx;
-      if (FT.kal && ind.kal && n > 60) {
-        const fl = new Map(ind.kal.flips.map(f => [f.i, f]));
-        const lowB = ind.kal.boxes.filter(b => b.up), upB = ind.kal.boxes.filter(b => !b.up);
-        let li = -1, ui = -1;
-        for (let i = 2; i < n; i++) {
-          while (li + 1 < lowB.length && lowB[li + 1].i0 <= i) li++;
-          while (ui + 1 < upB.length && upB[ui + 1].i0 <= i) ui++;
-          const ks = ind.kalS[i], kl = ind.kalL[i];
-          if (!isN(ks) || !isN(kl)) continue;
-          const f = fl.get(i);
-          if (f) add(i, f.up ? 'buy' : 'sell', 'kal', 1.2, f.up
-            ? `Kalman 50 cắt lên trên Kalman 150: xu hướng đổi sang tăng, hộp hỗ trợ ${fmt(l[i])}–${fmt(lowB[li].top)}`
-            : `Kalman 50 cắt xuống dưới Kalman 150: xu hướng đổi sang giảm, hộp kháng cự ${fmt(upB[ui].bot)}–${fmt(h[i])}`);
-          else if (ks > kl && li >= 0 && l[i] > lowB[li].top && l[i - 1] <= lowB[li].top)
-            add(i, 'buy', 'kal', 1.0, `Giá hồi về chạm hộp hỗ trợ Kalman (${fmt(lowB[li].bot)}–${fmt(lowB[li].top)}) rồi bật lên trong xu hướng tăng`);
-          else if (ks < kl && ui >= 0 && h[i] < upB[ui].bot && h[i - 1] >= upB[ui].bot)
-            add(i, 'sell', 'kal', 1.0, `Giá hồi lên chạm hộp kháng cự Kalman (${fmt(upB[ui].bot)}–${fmt(upB[ui].top)}) rồi bị đẩy xuống trong xu hướng giảm`);
-        }
-      }
-    },
-
-    vote(ctx, i, vote) {
-      const { ind, FT } = ctx;
-      if (FT.kal && i >= 2 && isN(ind.kalS[i]) && isN(ind.kalL[i]) && isN(ind.kalS[i - 2])) {
-        const ks = ind.kalS[i], kl = ind.kalL[i], up = ks > kl, rising = ks > ind.kalS[i - 2];
-        vote('kal', (up ? 1 : -1) * (up === rising ? 1 : 0.3),
-          `Kalman 50 ${up ? 'trên' : 'dưới'} Kalman 150 (${fmt(ks)} / ${fmt(kl)}): xu hướng ${up ? 'tăng' : 'giảm'}, đường 50 đang ${rising ? 'dốc lên' : 'dốc xuống'}${up === rising ? '' : ' (ngược xu hướng nên chỉ tính nhẹ)'}`);
-      }
-    },
-
-    draw(R) {
-      const { g, x, py, i0, i1, bw, plotW, priceH, hi, lo, n, C, A, ind, S, V, COL, zr } = R;
-      if(S.L.kal&&ind.kalS){
-        const KS=ind.kalS,KL=ind.kalL,UP='#13bd6e',DN='#af0d4b',ok=i=>isFinite(KS[i])&&isFinite(KL[i]);
-        for(const b of ind.kal.boxes){
-          if(b.i1<i0||b.i0>i1) continue;
-          const xa=x(b.i0)-bw/2,xb=x(b.i1)+bw/2;
-          g.fillStyle=b.up?'rgba(19,189,110,.26)':'rgba(175,13,75,.26)';
-          g.fillRect(xa,py(b.top),xb-xa,Math.max(1,py(b.bot)-py(b.top)));
-        }
-        for(let i=Math.max(1,i0);i<=i1;i++){
-          if(!ok(i)||!ok(i-1)) continue;
-          g.fillStyle=KS[i]>KL[i]?'rgba(19,189,110,.16)':'rgba(175,13,75,.16)';
-          g.beginPath();g.moveTo(x(i-1),py(KS[i-1]));g.lineTo(x(i),py(KS[i]));g.lineTo(x(i),py(KL[i]));g.lineTo(x(i-1),py(KL[i-1]));g.closePath();g.fill();
-        }
-        g.lineCap='round';
-        for(const [arr,w,mode] of [[KL,2.6,'t'],[KS,1.6,'s']]){
-          g.lineWidth=w;
-          for(let i=Math.max(2,i0);i<=i1;i++){
-            if(!ok(i)||!ok(i-1)||!isFinite(KS[i-2])) continue;
-            g.strokeStyle=mode==='t'?(KS[i]>KL[i]?UP:DN):(KS[i]>KS[i-2]?UP:DN);
-            g.beginPath();g.moveTo(x(i-1),py(arr[i-1]));g.lineTo(x(i),py(arr[i]));g.stroke();
-          }
-        }
-        g.lineCap='butt';
-        g.save();g.font='bold 11px sans-serif';g.textAlign='center';
-        for(const f of ind.kal.flips){
-          if(f.i<i0||f.i>i1) continue;
-          const y=py(KS[f.i]);g.fillStyle=f.up?UP:DN;g.textBaseline=f.up?'top':'bottom';
-          g.fillText((f.up?'▲ ':'▼ ')+fmt(C[f.i].c),x(f.i),f.up?y+7:y-7);
-        }
-        g.restore();
       }
     }
   });
@@ -3323,14 +3203,14 @@ function rtStart(sym){
 
 function renderAside(){
   const E=S.cur,el=$('aside');
-  if(!E){el.innerHTML='';return;}
+  if(!E){el.innerHTML='';$('below').innerHTML='';return;}
   const A=E.A,C=E.C,n=C.length,now=A.now,vd=verdict(now);
   const sel=S.selSig||A.signals[A.signals.length-1]||null;
-  let h='<div id="mtf"></div><div id="calc"></div>';
+  let h='<div id="mtf" class="o1"></div>',hb='<div id="calc" class="o2"></div>';   // h = cột phải; hb = dưới biểu đồ
 
   // dự báo cho các nến sắp tới
   const fc=A.fc,fcCls=fc.dir==='wait'?'wait':fc.dir,hrs=fc.horizon*TFS[S.tf]/3600000,hz=hrs<48?Math.round(hrs)+' giờ':Math.round(hrs/24)+' ngày';
-  h+=`<div class="card ticket ${fc.dir==='wait'?'':fc.dir}">
+  hb+=`<div class="card ticket o3 ${fc.dir==='wait'?'':fc.dir}">
     <div class="tk-head"><b class="${fc.dir==='buy'?'up':fc.dir==='sell'?'dn':''}">Dự báo: ${fc.dir==='buy'?'nghiêng TĂNG':fc.dir==='sell'?'nghiêng GIẢM':'chưa rõ hướng'}${fc.strong?' (mạnh)':''}</b><span class="mut">sau nến ${fdate(C[n-1].t,true)}</span></div>
     <div style="margin-top:4px"><span class="meter ${fcCls}"><i style="width:${fc.pct}%"></i></span> <b>${fc.pct}/100</b> <span class="mut">độ nghiêng của chỉ báo</span></div>
     ${fc.dir!=='wait'?`<div class="lv">
@@ -3352,7 +3232,7 @@ function renderAside(){
       r.status==='sl'?`<div class="res loss">Đối chiếu sau đó: chạm cắt lỗ sau ${r.bars} nến, ${R2(r.R)}</div>`:
       r.status==='time'?`<div class="res ${r.R>0?'win':'loss'}">Đối chiếu sau đó: hết ${r.bars} nến chưa chạm mốc nào, đóng lệnh ${R2(r.R)}</div>`:
       `<div class="res flat">Chưa có kết quả, đang chờ diễn biến</div>`;
-    h+=`<div class="card ticket ${sel.side}">
+    h+=`<div class="card ticket o4 ${sel.side}">
       <div class="tk-head"><b class="${buy?'up':'dn'}">Tín hiệu ${lw(sel.side)} (${age===0?'vừa xuất hiện':'trong quá khứ'})</b><span class="mut">${fdate(sel.t,true)}${age===0?', nến vừa đóng':`, cách ${age} nến`}</span></div>
       <div style="margin-top:4px"><span class="meter ${sel.side}"><i style="width:${sel.strength}%"></i></span> <b>${sel.strength}/100</b> <span class="mut">độ đồng thuận</span></div>
       <div class="lv">
@@ -3367,12 +3247,12 @@ function renderAside(){
       ${resHtml}
       <p class="note">Mũi tên là các lần chỉ báo đồng thuận trong quá khứ; phần đối chiếu chỉ để kiểm chứng độ chính xác. Chạm vào mũi tên để xem lý do.</p>
     </div>`;
-  }else h+=`<div class="card"><h3>Chưa có điểm mua bán</h3><p class="note">Trong dữ liệu này chưa có thời điểm nào đủ đồng thuận.</p></div>`;
+  }else h+=`<div class="card o4"><h3>Chưa có điểm mua bán</h3><p class="note">Trong dữ liệu này chưa có thời điểm nào đủ đồng thuận.</p></div>`;
 
   // backtest
   const st=A.stats,bd=btBadge(st.all,st.oos);
   const row=(a,b)=>`<span>${a}</span><b>${b}</b>`;
-  h+=`<div class="card"><h3>Backtest ${E.sym.replace('USDT','')} khung ${S.tf}</h3>
+  h+=`<div class="card o5"><h3>Backtest ${E.sym.replace('USDT','')} khung ${S.tf}</h3>
     <span class="badge ${bd.cls}" style="margin:0 0 8px">${bd.txt}</span>
     <div class="kv">${row('Số lệnh',st.all.n+` (${lw('buy')} ${st.buy.n}, ${lw('sell')} ${st.sell.n})`)}
     ${row('Tỷ lệ thắng',(st.all.wr*100).toFixed(0)+'%')}
@@ -3384,14 +3264,14 @@ function renderAside(){
 
   // vùng giá
   const last=C[n-1].c,zs=A.zonesNow.slice().sort((a,b)=>Math.abs(a.mid-last)-Math.abs(b.mid-last)).slice(0,5).sort((a,b)=>b.mid-a.mid);
-  h+=`<div class="card"><h3>Vùng giá gần nhất</h3>`+(zs.length?`<div class="kv">${zs.map(z=>`<span class="${z.mid>last?'dn':'up'}">${z.mid>last?'Kháng cự':'Hỗ trợ'} (${z.touches} lần chạm)</span><b>${fmt(z.lo)}–${fmt(z.hi)}</b>`).join('')}</div>`:`<p class="note">Chưa xác định được vùng nào.</p>`)+`</div>`;
+  hb+=`<div class="card o6"><h3>Vùng giá gần nhất</h3>`+(zs.length?`<div class="kv">${zs.map(z=>`<span class="${z.mid>last?'dn':'up'}">${z.mid>last?'Kháng cự':'Hỗ trợ'} (${z.touches} lần chạm)</span><b>${fmt(z.lo)}–${fmt(z.hi)}</b>`).join('')}</div>`:`<p class="note">Chưa xác định được vùng nào.</p>`)+`</div>`;
 
   // danh sách tín hiệu
   const rec=A.signals.slice(-12).reverse();
-  h+=`<div class="card"><h3>Tín hiệu gần đây</h3><ul class="list">${rec.map(s=>`<li><button data-sig="${s.i}" ${sel&&sel.i===s.i?'aria-current="true"':''}>
+  h+=`<div class="card o7"><h3>Tín hiệu gần đây</h3><ul class="list">${rec.map(s=>`<li><button data-sig="${s.i}" ${sel&&sel.i===s.i?'aria-current="true"':''}>
     <span><b class="${s.side==='buy'?'up':'dn'}">${sideTxt(s.side)}</b> <span class="mut">${fdate(s.t,true)}</span></span>
     <span>${s.res.status==='open'?'đang mở':R2(s.res.R)}</span></button></li>`).join('')||'<li class="note">Chưa có.</li>'}</ul></div>`;
-  el.innerHTML=h;renderMTF();
+  el.innerHTML=h;$('below').innerHTML=hb;renderMTF();
 }
 
 /* ---------- màn hình Bộ lọc ---------- */
@@ -3489,6 +3369,7 @@ async function showChart(){
     resetView();
   }catch(err){
     const stk=S.mkt!=='coin';
+    $('below').innerHTML='';
     $('aside').innerHTML=err&&err.bad
       ?`<div class="card"><h3>Không tìm thấy ${stk?'hợp đồng':'cặp'} ${sym}</h3><p class="note">${stk?'Hãy nhập đúng mã hợp đồng cổ phiếu trên Binance Futures, ví dụ TSLAUSDT hoặc NVDAUSDT.':S.mkt==='bstock'?'Hãy nhập đúng mã hợp đồng trên Bybit TradFi, ví dụ TSLA, XAU (vàng) hoặc CL (dầu thô).':S.mkt==='fx'?'Hãy nhập đúng mã hợp đồng forex trên Bybit, ví dụ EURUSD, GBPUSD hoặc USDJPY.':'Hãy nhập đúng mã trên Binance, ví dụ BTCUSDT hoặc SOLUSDT.'}</p></div>`
       :`<div class="card"><h3>Không tải được dữ liệu ${MKT[S.mkt].src}</h3><p class="note">${(err&&err.message)||'lỗi mạng'}. Bấm Làm mới để thử lại. Nếu lỗi lặp lại, có thể mạng của bạn đang bị chặn tới ${MKT[S.mkt].hosts[0].replace('https://','')}.</p></div>`;
