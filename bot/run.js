@@ -29,14 +29,23 @@ const MK = {
   fx:     { name: 'Forex',        hosts: ['https://api.bybit.com', 'https://api.bytick.com'], bybit: true, fee: 0.0006, tfs: ['4h', '1h', '15m'], minRaw: 100 },
 };
 
-/* ---------- nạp bộ phân tích từ index.html (script đầu tiên) ---------- */
+/* ---------- nạp bộ phân tích từ index.html ----------
+   Bản tách nhiều file: đọc các <script src="..."> theo đúng thứ tự trong index.html, bỏ js/app/ (phần giao diện).
+   Bản gộp 1 file (dist/index-single.html): lấy các <script> nội tuyến, bỏ khối cuối (giao diện). */
 function loadEngine() {
   const html = fs.readFileSync(HTML, 'utf8');
-  const m = html.match(/<script>([\s\S]*?)<\/script>/);
-  if (!m) throw new Error('Không tìm thấy bộ phân tích trong index.html');
+  const dir = path.dirname(HTML);
+  const srcs = [...html.matchAll(/<script\s+src="([^"]+)"[^>]*>\s*<\/script>/g)].map(x => x[1]).filter(s => !/(^|\/)js\/app\//.test(s));
+  let codes;
+  if (srcs.length) codes = srcs.map(s => fs.readFileSync(path.join(dir, s), 'utf8'));
+  else {
+    codes = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(x => x[1]);
+    if (codes.length > 1) codes.pop();
+  }
+  if (!codes.length) throw new Error('Không tìm thấy bộ phân tích trong index.html');
   const sb = { module: { exports: {} }, console: { log() {}, error() {}, warn() {} } };
   vm.createContext(sb);
-  vm.runInContext(m[1], sb, { timeout: 20000 });
+  for (const c of codes) vm.runInContext(c, sb, { timeout: 20000 });
   const E = sb.module.exports;
   if (!E.analyze || !E.mtfVerdict) throw new Error('index.html thiếu hàm phân tích, hãy dùng bản index.html mới nhất');
   E.setFee = f => vm.runInContext('globalThis.__fee=' + f, sb);
