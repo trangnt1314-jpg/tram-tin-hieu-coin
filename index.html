@@ -260,7 +260,7 @@ canvas{display:block;width:100%;height:100%}
     <div id="posList"></div>
   </section>
 
-  <p class="foot">Công cụ hỗ trợ phân tích, không phải lời khuyên đầu tư. Dự báo gom từ MACD, StochRSI, VWAP, phân kỳ RSI/MACD, FVG Order Blocks, Supertrend, Hull Suite, Bollinger, Ichimoku, vùng giá, volume và xu hướng EMA; đây là kịch bản ước tính cho các nến sắp tới, chưa xảy ra. Tín hiệu chỉ là xác suất, không có chỉ báo nào dự báo chắc chắn. Backtest giả định khớp lệnh tại giá đóng cửa nến tín hiệu, phí giả định theo từng thị trường (coin 0,1% mỗi chiều, cổ phiếu 0,05%, Bybit TradFi 0,06%, forex 0,03%), nếu cùng một nến chạm cả cắt lỗ và chốt lời thì tính là thua.</p>
+  <p class="foot">Công cụ hỗ trợ phân tích, không phải lời khuyên đầu tư. Dự báo gom từ MACD, StochRSI, VWAP, phân kỳ RSI/MACD, FVG Order Blocks, OBV, Bollinger, Ichimoku, vùng giá, volume và xu hướng EMA; đây là kịch bản ước tính cho các nến sắp tới, chưa xảy ra. Tín hiệu chỉ là xác suất, không có chỉ báo nào dự báo chắc chắn. Backtest giả định khớp lệnh tại giá đóng cửa nến tín hiệu, phí giả định theo từng thị trường (coin 0,1% mỗi chiều, cổ phiếu 0,05%, Bybit TradFi 0,06%, forex 0,03%), nếu cùng một nến chạm cả cắt lỗ và chốt lời thì tính là thua.</p>
 </main>
 
 <script>
@@ -1102,7 +1102,7 @@ function frvpTrend(zzp, h, l, v, atrA, n) {
     id: 'hull', label: 'Hull Suite', maxVote: 1,
     order: { calc: 90, bar: 90, vote: 130, over: 16 },
     layer: { key: 'hull', label: 'Hull Suite', on: 1, order: 64 },
-    toggle: { key: 'hull', label: 'Hull Suite', on: 1, order: 60 },
+    toggle: { key: 'hull', label: 'Hull Suite', on: 0, order: 60 },
     drawWhere: 'over',
 
     calc({ c }) { return { hull: hullOf(c, Math.floor(LENGTH * LENGTH_MULT)) }; },
@@ -1332,6 +1332,54 @@ function frvpTrend(zzp, h, l, v, atrA, n) {
 </script>
 <script>
 /* ======================================================================
+   OBV (On-Balance Volume): khối lượng cộng dồn theo chiều giá đóng cửa
+   Cung cấp: ind.obv (đường OBV), ind.obvMa (SMA 20 của OBV).
+   Tín hiệu: OBV cắt lên / cắt xuống đường trung bình 20 của chính nó (dòng tiền đổi chiều).
+   Phiếu Dự báo: ±0,5 theo vị trí OBV so với trung bình, ±0,5 theo độ dốc OBV so với 10 nến trước.
+   Nút "Bổ trợ" OBV bật/tắt tính vào điểm (không vẽ).
+   ====================================================================== */
+'use strict';
+(function () {
+  const MA_LEN = 20;        // trung bình của OBV
+  const SLOPE = 10;         // so OBV hiện tại với OBV cách đây bấy nhiêu nến
+  const SIGNAL_PTS = 0.8;   // điểm cho tín hiệu cắt
+
+  Indicators.register({
+    id: 'obv', label: 'OBV', maxVote: 1,
+    order: { calc: 60, bar: 60, vote: 140 },
+    toggle: { key: 'obv', label: 'OBV', on: 1, order: 70 },
+
+    calc({ c, v, n }) {
+      const obv = NaNs(n); let s = 0; obv[0] = 0;
+      for (let i = 1; i < n; i++) {
+        s += c[i] > c[i - 1] ? v[i] : c[i] < c[i - 1] ? -v[i] : 0;
+        obv[i] = s;
+      }
+      return { obv, obvMa: sma(obv, MA_LEN) };
+    },
+
+    signalAt(ctx, i, add) {
+      const { ind, FT } = ctx;
+      if (!FT.obv || i < MA_LEN + 1) return;
+      const o = ind.obv, m = ind.obvMa;
+      if (![o[i], o[i - 1], m[i], m[i - 1]].every(isN)) return;
+      if (o[i - 1] <= m[i - 1] && o[i] > m[i]) add(i, 'buy', 'obv', SIGNAL_PTS, `OBV cắt lên đường trung bình ${MA_LEN} của nó: dòng tiền đang chuyển sang mua`);
+      else if (o[i - 1] >= m[i - 1] && o[i] < m[i]) add(i, 'sell', 'obv', SIGNAL_PTS, `OBV cắt xuống đường trung bình ${MA_LEN} của nó: dòng tiền đang chuyển sang bán`);
+    },
+
+    vote(ctx, i, vote) {
+      const { ind, FT } = ctx;
+      if (!FT.obv || i < SLOPE) return;
+      const o = ind.obv, m = ind.obvMa;
+      if (![o[i], o[i - SLOPE], m[i]].every(isN)) return;
+      const pos = o[i] > m[i] ? 0.5 : -0.5, slope = o[i] > o[i - SLOPE] ? 0.5 : o[i] < o[i - SLOPE] ? -0.5 : 0;
+      vote('obv', pos + slope, `OBV ${o[i] > m[i] ? 'trên' : 'dưới'} trung bình ${MA_LEN}, ${slope > 0 ? 'đang dốc lên' : slope < 0 ? 'đang dốc xuống' : 'đi ngang'}: dòng tiền ${pos + slope > 0 ? 'nghiêng mua' : pos + slope < 0 ? 'nghiêng bán' : 'cân bằng'}`);
+    }
+  });
+})();
+</script>
+<script>
+/* ======================================================================
    Vùng hỗ trợ / kháng cự (từ đỉnh đáy fractal)
    Cung cấp: ctx.piv (fractal 5 nến) và kết quả A.zonesNow.
    Tín hiệu: chạm vùng rồi bật lại, hoặc phá vùng kèm volume lớn.
@@ -1516,7 +1564,7 @@ function zonesAt(piv, i, atrI, maxBack = 300) {
     id: 'st', label: 'Supertrend', maxVote: 1,
     order: { calc: 80, bar: 80, vote: 120, over: 15 },
     layer: { key: 'st', label: 'Supertrend', on: 1, order: 62 },
-    toggle: { key: 'st', label: 'Supertrend', on: 1, order: 50 },
+    toggle: { key: 'st', label: 'Supertrend', on: 0, order: 50 },
     drawWhere: 'over',
 
     // Giữ đúng thứ tự tính của Pine: up/dn chỉ được siết theo nến trước khi nến trước đóng cửa đúng phía

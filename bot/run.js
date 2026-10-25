@@ -51,6 +51,7 @@ function loadEngine() {
   E.setFee = f => vm.runInContext('globalThis.__fee=' + f, sb);
   E.setRR = (rr, m) => vm.runInContext('globalThis.__rrT=' + rr + ';globalThis.__minRR=' + m, sb);
   E.setFilters = f => vm.runInContext('globalThis.__ft=' + JSON.stringify(f), sb);
+  E.defaultFilters = () => vm.runInContext('Indicators.toggleDefaults()', sb);   // nút "Bổ trợ" mặc định giống app (VWAP, phân kỳ, FVG-OB, Supertrend, Hull...)
   return E;
 }
 
@@ -113,6 +114,26 @@ async function evaluate(E, mk, sym, now, fut) {
   return { v: E.mtfVerdict(R, false, fut), R, C, A };
 }
 
+/* ---------- cảnh báo đổi hướng Supertrend / Hull Suite ----------
+   Tìm điểm đổi hướng trong `lookback` nến đã đóng gần nhất của một khung. Không phụ thuộc nút bật/tắt tính điểm. */
+const FLIP_NAME = { st: 'Supertrend', hull: 'Hull Suite' };
+function findFlips(A, which, lookback) {
+  const ind = A.ind, n = A.n, out = [];
+  for (let i = Math.max(4, n - lookback); i < n; i++) {
+    if (which === 'st') {
+      const t = ind.stTrend;
+      if (t && isFinite(ind.stUp[i]) && isFinite(ind.stUp[i - 1]) && t[i] !== t[i - 1]) out.push({ i, side: t[i] === 1 ? 'buy' : 'sell' });
+    } else if (which === 'hull') {
+      const H = ind.hull; if (!H) continue;
+      const a = H[i], b = H[i - 2], pa = H[i - 1], pb = H[i - 3];
+      if (![a, b, pa, pb].every(isFinite)) continue;
+      if (a > b && pa <= pb) out.push({ i, side: 'buy' });
+      else if (b > a && pb <= pa) out.push({ i, side: 'sell' });
+    }
+  }
+  return out;
+}
+
 /* ---------- kết quả tín hiệu đang mở ---------- */
 function fin(s, status, price, ts) {
   const sg = s.side === 'sell' ? -1 : 1;
@@ -154,17 +175,21 @@ const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8'))
 const baseOf = sym => sym.replace(/USDT$/, '');
 const fmtTime = ms => new Date(ms).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
 const agoTxt = ms => { const m = Math.max(0, Math.round(ms / 60000)); if (m < 60) return m + ' phút'; const h = Math.floor(m / 60), r = m % 60; return h + ' giờ' + (r ? ' ' + r + ' phút' : ''); };
+const M0 = mk => MK[mk];
 const arrow = d => d === 'buy' ? '▲' : d === 'sell' ? '▼' : '–';
 
 async function main() {
   const E = loadEngine();
   const cfg = JSON.parse(fs.readFileSync(CFG, 'utf8'));
-  E.setFilters(Object.assign({ vwap: 1, frvp: 1, frMode: 'swing', div: 1, ob: 1, fvg: 1 }, cfg.filters || {}));   // bộ lọc bổ trợ, tắt bằng "filters": {"ob": 0} trong config.json
+  E.setFilters(Object.assign({}, E.defaultFilters(), { frvp: 1, frMode: 'swing' }, cfg.filters || {}));   // bộ lọc bổ trợ giống app; tắt bằng "filters": {"st": 0, "hull": 0} trong config.json
   fs.mkdirSync(DATA, { recursive: true });
   const sigFile = path.join(DATA, 'signals.json'), stFile = path.join(DATA, 'state.json');
   const log = readJSON(sigFile, { lastRun: 0, signals: [] }), state = readJSON(stFile, { v: {} });
   if (!Array.isArray(log.signals)) log.signals = [];
   if (!state.v) state.v = {};
+  if (!state.flip) state.flip = {};
+  const FL = Object.assign({ on: true, tfs: ['1h', '4h'], ind: ['st', 'hull'], lookback: 2 }, cfg.flipAlerts || {});   // config.json: "flipAlerts": {"on": false} để tắt
+  const flips = [];
   const before = JSON.stringify(log.signals) + JSON.stringify(state);
   const now = Date.now(), cool = (cfg.cooldownHours || 6) * 36e5, expire = (cfg.expireHours || 60) * 36e5;
   const msgs = [];
@@ -200,6 +225,13 @@ async function main() {
     try {
       const r = await evaluate(E, it.mk, it.sym, now, fut);
       ok++;
+      if (FL.on) for (const tf of FL.tfs) {
+        if (!r.A[tf]) continue;
+        for (const w of FL.ind) for (const f of findFlips(r.A[tf], w, FL.lookback)) {
+          const k2 = key + '|' + tf + '|' + w, c = r.C[tf][f.i];
+          if (c.ct > (state.flip[k2] || 0)) { state.flip[k2] = c.ct; flips.push({ sym: it.sym, name: M0(it.mk).name, tf, w, side: f.side, ct: c.ct, px: c.c }); }
+        }
+      }
       const v = r.v, side = v.side === 'sell' ? 'sell' : 'buy';
       const ready = E.mtfReady(v, fut) && (!cfg.onlyStrong || /MẠNH$/.test(v.txt));
       const prev = state.v[key], M = MK[it.mk];
@@ -246,6 +278,15 @@ async function main() {
       }
       state.v[key] = { txt: v.txt, ready, last, side: ready ? side : (prev && prev.side) || side };
     } catch (e) { bad++; lastErr = e.message; console.error('Lỗi', key, e.message); }
+  }
+
+  // 2b) gộp các điểm đổi hướng Supertrend / Hull thành 1 tin
+  if (flips.length) {
+    const tfRank = { '1d': 0, '4h': 1, '1h': 2, '15m': 3 };
+    flips.sort((a, b) => (tfRank[a.tf] - tfRank[b.tf]) || a.sym.localeCompare(b.sym));
+    const lines = flips.slice(0, 30).map(f => `${f.side === 'buy' ? '🟢 BUY ▲' : '🔴 SELL ▼'} ${baseOf(f.sym)} ${f.tf} · ${FLIP_NAME[f.w]} chuyển ${f.side === 'buy' ? 'TĂNG' : 'GIẢM'} (nến đóng ${fmtTime(f.ct)}, giá ${E.fmt(f.px)})${f.name !== 'Coin' ? ' [' + f.name + ']' : ''}`);
+    if (flips.length > 30) lines.push(`… và ${flips.length - 30} cảnh báo khác.`);
+    msgs.push(['🔔 Supertrend / Hull đổi hướng (theo nến đã đóng)'].concat(lines, ['Đây chỉ là cảnh báo của từng chỉ báo, chưa phải điểm vào lệnh. Điều kiện vào lệnh vẫn do kết luận đa khung quyết định; chỉ báo đổi hướng có thể trễ và hay cho tín hiệu giả khi thị trường đi ngang.']).join('\n'));
   }
 
   // 3) báo lỗi nếu không tải được gì (tối đa 12 giờ một lần)
