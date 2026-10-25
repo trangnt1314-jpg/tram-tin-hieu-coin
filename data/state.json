@@ -1,19 +1,19 @@
 {
  "v": {
   "coin:BTCUSDT": {
-   "txt": "CHỜ",
+   "txt": "TRÁNH MUA",
    "ready": false,
    "last": 1792369931051,
    "side": "buy"
   },
   "coin:ETHUSDT": {
-   "txt": "CHỜ",
+   "txt": "TRÁNH MUA",
    "ready": false,
    "last": 0,
    "side": "buy"
   },
   "coin:SOLUSDT": {
-   "txt": "CHỜ",
+   "txt": "TRÁNH MUA",
    "ready": false,
    "last": 1792601388095,
    "side": "buy"
