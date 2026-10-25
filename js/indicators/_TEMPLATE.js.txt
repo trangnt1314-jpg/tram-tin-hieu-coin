@@ -1,0 +1,45 @@
+/* MẪU CHỈ BÁO MỚI. Cách dùng:
+   1. Copy file này thành js/indicators/ten-chi-bao.js (đổi đuôi thành .js)
+   2. Thêm 1 dòng <script src="js/indicators/ten-chi-bao.js"></script> vào index.html (cùng chỗ với các chỉ báo khác)
+   3. Xoá những phần không cần. Cái nào không khai báo thì hệ thống bỏ qua. */
+'use strict';
+(function () {
+  Indicators.register({
+    id: 'myind', label: 'Tên hiển thị', maxVote: 1,          // id = mã loại tín hiệu; maxVote = điểm phiếu tối đa trong Dự báo
+    order: { calc: 90, bar: 90, vote: 120, under: 70 },       // số nhỏ chạy / vẽ trước
+    layer:  { key: 'myind', label: 'Tên nút', on: 0, order: 100 },   // nút bật/tắt lớp vẽ trên chart (bỏ nếu không vẽ)
+    // toggle: { key: 'myind', label: 'Tên nút bổ trợ', on: 1, order: 60 },  // nút "Bổ trợ" tính vào điểm (tuỳ chọn)
+    drawWhere: 'under',                                       // 'under' = vẽ dưới nến, 'over' = vẽ trên nến
+
+    // 1) Tính giá trị, trả về các trường gộp vào ind (ví dụ ind.myLine)
+    calc({ c, n }) {
+      const myLine = sma(c, 10);
+      return { myLine };
+    },
+
+    // 2) Tín hiệu tại nến i: add(i, 'buy'|'sell', 'myind', điểm, 'lý do tiếng Việt', confirm?)
+    signalAt(ctx, i, add) {
+      const { c, ind } = ctx;
+      if (isN(ind.myLine[i]) && c[i - 1] <= ind.myLine[i - 1] && c[i] > ind.myLine[i])
+        add(i, 'buy', 'myind', 1.0, 'Giá vượt lên trên đường MyLine');
+    },
+
+    // 3) Phiếu cho Dự báo: vote('myind', giá_trị từ -maxVote đến +maxVote, 'lý do')
+    vote(ctx, i, vote) {
+      const { c, ind } = ctx;
+      if (isN(ind.myLine[i])) vote('myind', c[i] > ind.myLine[i] ? 0.5 : -0.5, 'Giá ' + (c[i] > ind.myLine[i] ? 'trên' : 'dưới') + ' MyLine');
+    },
+
+    // 4) Vẽ lên biểu đồ giá. R có: g, x(i), py(giá), i0, i1, ind, A, S, COL ...
+    draw(R) {
+      const { g, x, py, i0, i1, ind } = R;
+      g.strokeStyle = '#2F7DBE'; g.lineWidth = 1.4; g.beginPath(); let st = false;
+      for (let i = i0; i <= i1; i++) {
+        const v = ind.myLine[i];
+        if (!isFinite(v)) { st = false; continue; }
+        if (!st) { g.moveTo(x(i), py(v)); st = true; } else g.lineTo(x(i), py(v));
+      }
+      g.stroke();
+    }
+  });
+})();
