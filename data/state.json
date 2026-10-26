@@ -25,5 +25,7 @@
    "side": "buy"
   }
  },
- "flip": {}
+ "flip": {
+  "coin:BTCUSDT|1h|hull": 1792969199999
+ }
 }
