@@ -19,8 +19,8 @@
    "side": "buy"
   },
   "coin:BNBUSDT": {
-   "txt": "MUA",
-   "ready": true,
+   "txt": "CHỜ",
+   "ready": false,
    "last": 1793035986386,
    "side": "buy"
   }
@@ -28,6 +28,7 @@
  "flip": {
   "coin:BTCUSDT|1h|hull": 1793033999999,
   "coin:SOLUSDT|1h|hull": 1793044799999,
-  "coin:BNBUSDT|4h|hull": 1793044799999
+  "coin:BNBUSDT|4h|hull": 1793044799999,
+  "coin:BNBUSDT|1h|hull": 1793077199999
  }
 }
