@@ -9,7 +9,8 @@
  * Biến môi trường: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (không bắt buộc, thiếu thì chỉ ghi dữ liệu).
  * Chế độ: trong config.json đặt "mode": "futures" để bot báo cả LONG và SHORT.
  *          Bỏ trống hoặc "spot" thì giữ như cũ, chỉ báo điểm MUA.
- * Bộ lọc bổ trợ VWAP / FRVP / phân kỳ RSI-MACD / Order Block / FVG mặc định bật; tắt từng cái bằng "filters": {"vwap":0,"frvp":0,"div":0,"ob":0,"fvg":0} trong config.json. Cách neo FRVP: "frMode": "swing" (đáy→đỉnh nhịp, mặc định), "now" (đầu nhịp→nay) hoặc "cur" (kiểu cũ).
+ * Bộ lọc bổ trợ (nút "Bổ trợ" trong app: phân kỳ RSI/MACD, FVG-OB, OBV, Cấu trúc giá...) mặc định giống app; chỉnh từng cái bằng "filters" trong config.json, ví dụ {"obv":0,"st":1,"hull":1,"wyk":1,"reg":1}.
+ * Cảnh báo đổi hướng Supertrend / Hull: "flipAlerts": {"on": true, "tfs": ["1h","4h"], "ind": ["st","hull"], "lookback": 2}.
  * Công cụ phân tích, không phải lời khuyên đầu tư.
  */
 const fs = require('fs'), path = require('path'), vm = require('vm');
@@ -51,7 +52,7 @@ function loadEngine() {
   E.setFee = f => vm.runInContext('globalThis.__fee=' + f, sb);
   E.setRR = (rr, m) => vm.runInContext('globalThis.__rrT=' + rr + ';globalThis.__minRR=' + m, sb);
   E.setFilters = f => vm.runInContext('globalThis.__ft=' + JSON.stringify(f), sb);
-  E.defaultFilters = () => vm.runInContext('Indicators.toggleDefaults()', sb);   // nút "Bổ trợ" mặc định giống app (VWAP, phân kỳ, FVG-OB, Supertrend, Hull...)
+  E.defaultFilters = () => vm.runInContext('Indicators.toggleDefaults()', sb);   // nút "Bổ trợ" mặc định giống app (phân kỳ, FVG-OB, OBV, Cấu trúc giá...)
   return E;
 }
 
@@ -112,6 +113,19 @@ async function evaluate(E, mk, sym, now, fut) {
     R[tf] = { dir: fc.dir, pct: fc.pct, norm: fc.bias / fc.max };
   });
   return { v: E.mtfVerdict(R, false, fut), R, C, A };
+}
+
+/* ---------- bối cảnh thị trường (ADX + Wyckoff) cho tin nhắn ---------- */
+function regTxt(A) {
+  const r = A && A.regime; if (!r) return '';
+  return r.state === 'trend' ? 'có xu hướng ' + (r.dir === 'buy' ? 'tăng' : 'giảm') : r.state === 'range' ? 'đi ngang' : 'chuyển tiếp';
+}
+function ctxLine(A, tfs) {
+  const parts = tfs.filter(tf => A[tf]).map(tf => {
+    const w = A[tf].wyckoff;
+    return `${tf} ${regTxt(A[tf]) || '–'}${w && w.phase ? ', Wyckoff ' + w.label.split(' (')[0].toLowerCase() : ''}`;
+  });
+  return parts.length ? 'Bối cảnh: ' + parts.join(' · ') : '';
 }
 
 /* ---------- cảnh báo đổi hướng Supertrend / Hull Suite ----------
@@ -181,7 +195,7 @@ const arrow = d => d === 'buy' ? '▲' : d === 'sell' ? '▼' : '–';
 async function main() {
   const E = loadEngine();
   const cfg = JSON.parse(fs.readFileSync(CFG, 'utf8'));
-  E.setFilters(Object.assign({}, E.defaultFilters(), { frvp: 1, frMode: 'swing' }, cfg.filters || {}));   // bộ lọc bổ trợ giống app; tắt bằng "filters": {"st": 0, "hull": 0} trong config.json
+  E.setFilters(Object.assign({}, E.defaultFilters(), cfg.filters || {}));   // bộ lọc bổ trợ giống app; tắt bằng "filters": {"st": 0, "hull": 0} trong config.json
   fs.mkdirSync(DATA, { recursive: true });
   const sigFile = path.join(DATA, 'signals.json'), stFile = path.join(DATA, 'state.json');
   const log = readJSON(sigFile, { lastRun: 0, signals: [] }), state = readJSON(stFile, { v: {} });
@@ -229,7 +243,7 @@ async function main() {
         if (!r.A[tf]) continue;
         for (const w of FL.ind) for (const f of findFlips(r.A[tf], w, FL.lookback)) {
           const k2 = key + '|' + tf + '|' + w, c = r.C[tf][f.i];
-          if (c.ct > (state.flip[k2] || 0)) { state.flip[k2] = c.ct; flips.push({ sym: it.sym, name: M0(it.mk).name, tf, w, side: f.side, ct: c.ct, px: c.c }); }
+          if (c.ct > (state.flip[k2] || 0)) { state.flip[k2] = c.ct; flips.push({ sym: it.sym, name: M0(it.mk).name, tf, w, side: f.side, ct: c.ct, px: c.c, reg: regTxt(r.A[tf]) }); }
         }
       }
       const v = r.v, side = v.side === 'sell' ? 'sell' : 'buy';
@@ -262,8 +276,9 @@ async function main() {
               `Cắt lỗ: ${E.fmt(a.sl)} (−${(a.risk / a.E0 * 100).toFixed(2)}%)`,
               `Chốt lời: ${E.fmt(a.tp)} (+${(RRv * a.risk / a.E0 * 100).toFixed(2)}%), lãi/lỗ còn lại 1:${q.rrLeft.toFixed(2)}`,
               `Khung: ${M.tfs.map(tf => tf + ' ' + arrow(r.R[tf].dir)).join(' · ')}, điểm ${sc > 0 ? '+' : ''}${sc}`,
+              ctxLine(r.A, ['1d', '4h']),
               `Kết luận chốt theo nến đã đóng. Hãy kiểm tra lại giá hiện tại và tự tính khối lượng theo mức rủi ro của bạn trước khi vào lệnh.${fut ? ' Futures có phí funding và rủi ro thanh lý, hãy tính khoảng cách tới giá thanh lý trước khi chọn đòn bẩy.' : ''} Chỉ là công cụ phân tích, không phải lời khuyên đầu tư.`,
-            ].join('\n'));
+            ].filter(Boolean).join('\n'));
           }
         }
       }
@@ -284,7 +299,7 @@ async function main() {
   if (flips.length) {
     const tfRank = { '1d': 0, '4h': 1, '1h': 2, '15m': 3 };
     flips.sort((a, b) => (tfRank[a.tf] - tfRank[b.tf]) || a.sym.localeCompare(b.sym));
-    const lines = flips.slice(0, 30).map(f => `${f.side === 'buy' ? '🟢 BUY ▲' : '🔴 SELL ▼'} ${baseOf(f.sym)} ${f.tf} · ${FLIP_NAME[f.w]} chuyển ${f.side === 'buy' ? 'TĂNG' : 'GIẢM'} (nến đóng ${fmtTime(f.ct)}, giá ${E.fmt(f.px)})${f.name !== 'Coin' ? ' [' + f.name + ']' : ''}`);
+    const lines = flips.slice(0, 30).map(f => `${f.side === 'buy' ? '🟢 BUY ▲' : '🔴 SELL ▼'} ${baseOf(f.sym)} ${f.tf} · ${FLIP_NAME[f.w]} chuyển ${f.side === 'buy' ? 'TĂNG' : 'GIẢM'} (nến đóng ${fmtTime(f.ct)}, giá ${E.fmt(f.px)})${f.reg ? ' · thị trường ' + f.reg + (f.reg === 'đi ngang' ? ' (dễ báo giả)' : '') : ''}${f.name !== 'Coin' ? ' [' + f.name + ']' : ''}`);
     if (flips.length > 30) lines.push(`… và ${flips.length - 30} cảnh báo khác.`);
     msgs.push(['🔔 Supertrend / Hull đổi hướng (theo nến đã đóng)'].concat(lines, ['Đây chỉ là cảnh báo của từng chỉ báo, chưa phải điểm vào lệnh. Điều kiện vào lệnh vẫn do kết luận đa khung quyết định; chỉ báo đổi hướng có thể trễ và hay cho tín hiệu giả khi thị trường đi ngang.']).join('\n'));
   }
