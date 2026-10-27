@@ -19,16 +19,17 @@
    "side": "buy"
   },
   "coin:BNBUSDT": {
-   "txt": "CHỜ",
-   "ready": false,
-   "last": 1793035986386,
+   "txt": "MUA MẠNH",
+   "ready": true,
+   "last": 1793125227885,
    "side": "buy"
   }
  },
  "flip": {
   "coin:BTCUSDT|1h|hull": 1793033999999,
-  "coin:SOLUSDT|1h|hull": 1793044799999,
-  "coin:BNBUSDT|4h|hull": 1793102399999,
-  "coin:BNBUSDT|1h|hull": 1793077199999
+  "coin:SOLUSDT|1h|hull": 1793120399999,
+  "coin:BNBUSDT|4h|hull": 1793116799999,
+  "coin:BNBUSDT|1h|hull": 1793077199999,
+  "coin:BNBUSDT|4h|st": 1793116799999
  }
 }
