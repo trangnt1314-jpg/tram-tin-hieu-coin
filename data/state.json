@@ -13,14 +13,14 @@
    "side": "buy"
   },
   "coin:SOLUSDT": {
-   "txt": "CHỜ",
+   "txt": "MUA, chờ điểm vào",
    "ready": false,
    "last": 1792601388095,
    "side": "buy"
   },
   "coin:BNBUSDT": {
-   "txt": "MUA MẠNH",
-   "ready": true,
+   "txt": "CHỜ",
+   "ready": false,
    "last": 1793125227885,
    "side": "buy"
   }
