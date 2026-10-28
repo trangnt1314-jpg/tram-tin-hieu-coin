@@ -13,8 +13,8 @@
    "side": "buy"
   },
   "coin:SOLUSDT": {
-   "txt": "MUA",
-   "ready": true,
+   "txt": "MUA, chờ điểm vào",
+   "ready": false,
    "last": 1793151489063,
    "side": "buy"
   },
@@ -31,6 +31,7 @@
   "coin:BNBUSDT|4h|hull": 1793116799999,
   "coin:BNBUSDT|1h|hull": 1793077199999,
   "coin:BNBUSDT|4h|st": 1793116799999,
-  "coin:BTCUSDT|4h|hull": 1793145599999
+  "coin:BTCUSDT|4h|hull": 1793145599999,
+  "coin:ETHUSDT|4h|hull": 1793159999999
  }
 }
