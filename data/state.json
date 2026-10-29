@@ -26,15 +26,16 @@
   }
  },
  "flip": {
-  "coin:BTCUSDT|1h|hull": 1793033999999,
-  "coin:SOLUSDT|1h|hull": 1793120399999,
+  "coin:BTCUSDT|1h|hull": 1793293199999,
+  "coin:SOLUSDT|1h|hull": 1793293199999,
   "coin:BNBUSDT|4h|hull": 1793116799999,
   "coin:BNBUSDT|1h|hull": 1793077199999,
   "coin:BNBUSDT|4h|st": 1793116799999,
   "coin:BTCUSDT|4h|hull": 1793145599999,
   "coin:ETHUSDT|4h|hull": 1793159999999,
-  "coin:SOLUSDT|1h|st": 1793195999999,
+  "coin:SOLUSDT|1h|st": 1793289599999,
   "coin:SOLUSDT|4h|hull": 1793174399999,
-  "coin:ETHUSDT|1h|hull": 1793228399999
+  "coin:ETHUSDT|1h|hull": 1793293199999,
+  "coin:ETHUSDT|1h|st": 1793289599999
  }
 }
