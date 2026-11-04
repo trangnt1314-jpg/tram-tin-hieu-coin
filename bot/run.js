@@ -9,7 +9,8 @@
  * Biến môi trường: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (không bắt buộc, thiếu thì chỉ ghi dữ liệu).
  * Chế độ: trong config.json đặt "mode": "futures" để bot báo cả LONG và SHORT.
  *          Bỏ trống hoặc "spot" thì giữ như cũ, chỉ báo điểm MUA.
- * Bộ lọc bổ trợ (nút "Bổ trợ" trong app: phân kỳ RSI/MACD, FVG-OB, OBV, Cấu trúc giá...) mặc định giống app; chỉnh từng cái bằng "filters" trong config.json, ví dụ {"obv":0,"st":1,"hull":1,"wyk":1,"reg":1}.
+ * Bộ lọc bổ trợ (nút "Bổ trợ" trong app: phân kỳ RSI/MACD, FVG-OB, OBV, Cấu trúc giá...) mặc định giống app; chỉnh từng cái bằng "filters" trong config.json, ví dụ {"obv":0,"st":1,"hull":1,"wyk":1,"reg":1,"grp":0} (grp = gom nhóm chỉ báo, mặc định bật; đặt 0 để về cách chấm điểm cũ).
+ * Cảnh báo tương quan: khi có từ "corrMin" (mặc định 3) tín hiệu mới cùng chiều trong một lần quét, bot nhắn thêm tương quan lợi suất 1h giữa các mã đó.
  * Cảnh báo đổi hướng Supertrend / Hull: "flipAlerts": {"on": true, "tfs": ["1h","4h"], "ind": ["st","hull"], "lookback": 2}.
  * Công cụ phân tích, không phải lời khuyên đầu tư.
  */
@@ -207,6 +208,7 @@ async function main() {
   const before = JSON.stringify(log.signals) + JSON.stringify(state);
   const now = Date.now(), cool = (cfg.cooldownHours || 6) * 36e5, expire = (cfg.expireHours || 60) * 36e5;
   const msgs = [];
+  const fresh = [];   // tín hiệu mới của lần quét này: dùng để cảnh báo tương quan
   const fut = cfg.mode === 'futures';
   const RRv = +cfg.rr || 2;                                   // chốt lời theo R (config.json: "rr": 2)
   E.setRR(RRv, +cfg.minRR || 1.5);                            // R:R còn lại tối thiểu để chấp nhận vào lệnh ("minRR")
@@ -264,6 +266,7 @@ async function main() {
             log.signals.push({ id: key + ':' + t0, mk: it.mk, sym: it.sym, t: t0, from: t0, side, entry: a.E0, sl: a.sl, tp: a.tp, risk: a.risk, rr: RRv, fee: M.fee,
               verdict: v.txt, score: sc, dirs, status: 'open', R: null });
             last = now;
+            fresh.push({ name: baseOf(it.sym), side, map: E.retMap(r.C['1h'], 200) });
             const sgn0 = side === 'sell' ? -1 : 1, pc = sgn0 * (P - a.E0) / a.E0 * 100;
             msgs.push([
               `${side === 'sell' ? '🔴' : '🟢'} ${v.txt} ${baseOf(it.sym)} (${M.name})`,
@@ -293,6 +296,13 @@ async function main() {
       }
       state.v[key] = { txt: v.txt, ready, last, side: ready ? side : (prev && prev.side) || side };
     } catch (e) { bad++; lastErr = e.message; console.error('Lỗi', key, e.message); }
+  }
+
+  // 2a) nhiều tín hiệu mới cùng chiều: đo tương quan để nhắc rằng đó gần như là một cược
+  for (const w of E.corrWarn(fresh, +cfg.corrMin || 3)) {
+    const hi = w.corr != null && w.corr >= 0.6;
+    msgs.push(`${hi ? '⚠️ ' : ''}${w.names.length} tín hiệu ${lbl(w.side)} mới cùng lúc: ${w.names.join(', ')}.` +
+      (w.corr != null ? ` Tương quan lợi suất 1h trung bình giữa chúng khoảng ${w.corr.toFixed(2)}${hi ? ': các mã này thường chạy cùng nhau nên gần như là một cược, hãy giảm khối lượng mỗi lệnh hoặc chọn 1 đến 2 mã.' : ': khá thấp, rủi ro ít chồng lên nhau hơn.'}` : ' Chưa đủ dữ liệu để đo tương quan.'));
   }
 
   // 2b) gộp các điểm đổi hướng Supertrend / Hull thành 1 tin
