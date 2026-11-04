@@ -1,44 +1,52 @@
-# Trạm tín hiệu — bản tách chỉ báo
+# Trạm tín hiệu coin
 
-Mở `index.html` như cũ (cả thư mục phải đi cùng nhau). Cần đưa lên host 1 file: chạy `python3 tools/bundle.py` → `dist/index-single.html`.
+Mở `index.html` bằng trình duyệt (Chrome hoặc Safari qua đường link, không mở trực tiếp từ ứng dụng ghi chú). Toàn bộ app nằm trong **một file `index.html`**: mỗi chỉ báo là một khối `<script>` riêng, đầu khối có chú thích ghi chỉ báo cung cấp gì và tín hiệu ra sao.
 
-## Mỗi chỉ báo = 1 file trong `js/indicators/`
+## Thư mục
 
-| File | Chỉ báo | Cung cấp (các trường app đọc) |
-|---|---|---|
-| `macd.js` | MACD 12·26·9 + khung MACD | `ind.macd, ind.sig, ind.hist` |
-| `stochrsi.js` | StochRSI + RSI 14 + khung | `ind.rsi, ind.sk, ind.sd` |
-| `kdj.js` | KDJ (chưa có nút bật) | `ind.K, ind.D, ind.J` |
-| `bollinger.js` | Bollinger 20·2 | `ind.bbMid/bbUp/bbLo/bbBw` |
-| `ichimoku.js` | Ichimoku 9·26·52 | `ind.tenkan/kijun/spanA/spanB` |
-| `kalman.js` | Kalman Trend Levels | `ind.kalS/kalL/kal` |
-| `ema-trend.js` | EMA 50/200, cộng trừ điểm theo xu hướng | `ind.ema50, ind.ema200` |
-| `vwap.js` | VWAP | `A.ext.vwap` |
-| `divergence.js` | Phân kỳ RSI/MACD | `A.ext.divs, A.ext.divAt` |
-| `orderblock.js` | Order Block | `A.ext.obs, A.ext.obV` |
-| `fvg.js` | Fair Value Gap | `A.ext.fvgs, A.ext.fvgV` |
-| `fibonacci.js` | Fibonacci | `A.fib` |
-| `sr-zones.js` | Vùng hỗ trợ/kháng cự | `A.zonesNow` |
-| `volume.js` | Volume xác nhận | (dùng `ind.volSma`) |
-| `elliott.js` | Sóng Elliott (chưa có nút bật) | `A.ew, A.ewLast` |
-| `frvp.js` | FRVP (chỉ để xem) | `A.frvp` |
+| Đường dẫn | Việc |
+|---|---|
+| `index.html` | App (giao diện, engine chấm điểm, backtest, các chỉ báo) |
+| `bot/run.js` | Bot quét tín hiệu, nhắn Telegram, ghi `data/` (nạp lại engine từ `index.html`, không viết lại) |
+| `bot/config.json` | Danh sách mã, chế độ spot/futures, bộ lọc bổ trợ, cảnh báo đổi hướng |
+| `data/signals.json`, `data/state.json` | Kết quả tín hiệu thật do bot ghi (tab "Kết quả thật" đọc file này) |
+| `.github/workflows/signals.yml` | Chạy bot mỗi 15 phút trên GitHub Actions |
+| `tools/bundle.py` | Chỉ cần khi quay lại bản tách `js/*.js`: gộp thành một file. Với `index.html` hiện tại (đã gộp sẵn) thì không cần |
 
-Trong mỗi file có đủ 4 phần: **calc** (tính), **signalAt/signalAll** (tín hiệu + điểm + lý do), **vote** (phiếu cho Dự báo), **draw/pane** (vẽ). Đầu file ghi rõ chỉ báo cung cấp gì.
+## Chỉ báo hiện có
 
-## Sửa gì ở đâu
+| Mã | Chỉ báo | Nhóm | Nút "Bổ trợ" mặc định |
+|---|---|---|---|
+| `macd` | MACD 12·26·9 | Động lượng | luôn tính |
+| `srsi` | StochRSI + RSI 14 | Động lượng | luôn tính |
+| `div` | Phân kỳ RSI/MACD | Động lượng | bật |
+| `st` | Supertrend (ATR 10, ×3) | Xu hướng | tắt |
+| `hull` | Hull Suite (HMA 55) | Xu hướng | tắt |
+| `struct` | Cấu trúc giá BOS/CHoCH | Xu hướng | bật |
+| `fvgob` | FVG Order Blocks [BigBeluga] | Vùng cung cầu | bật |
+| `wyk` | Wyckoff (Spring, Upthrust, SOS, SOW) | Vùng cung cầu | tắt |
+| `obv` | OBV | Dòng tiền | bật |
+| `bb` | Bollinger 20·2 | Biến động | luôn tính |
+| `vol` | Volume xác nhận | (không tính nhóm) | luôn tính |
+| `reg` | ADX 14: "Lọc đi ngang" (ADX dưới 20 thì bỏ phiếu và tín hiệu của nhóm Xu hướng) | bộ lọc | tắt |
+| `grp` | "Gom nhóm chỉ báo" (xem dưới) | cách chấm điểm | bật |
 
-- Đổi tham số, ngưỡng, điểm, lý do hiển thị, màu vẽ của 1 chỉ báo → chỉ sửa file của nó.
-- Ngưỡng vào lệnh (≥3 điểm, ≥2 chỉ báo độc lập, cửa sổ 3 nến, cách tính Dự báo) → `js/engine/analyze.js`.
-- Backtest (`simulate`, `calcStats`) → `js/engine/backtest.js`.
-- ATR14 và SMA volume 20 (nhiều chỉ báo dùng chung) → `js/core/calc.js`. ZigZag, fractal → `js/core/swings.js`.
-- Giao diện, tải dữ liệu, vị thế, bộ quét → `js/app/app.js`.
+Đã bỏ: Fibonacci, FRVP, Ichimoku, Kalman, KDJ, Elliott, EMA 50/200, VWAP, Vùng giá (hỗ trợ/kháng cự).
 
-## Thêm chỉ báo mới
+## Cách chấm điểm
 
-Copy `js/indicators/_TEMPLATE.js.txt` thành `ten.js`, thêm 1 dòng `<script>` vào `index.html`. Nút bật/tắt, nhãn lý do, phiếu Dự báo tự có, không phải sửa chỗ khác.
+- Mỗi tín hiệu cần từ 3 điểm và từ 2 chỉ báo độc lập, trong cửa sổ 3 nến.
+- **Gom nhóm chỉ báo (`grp`, mặc định bật):** các chỉ báo cùng nhóm chỉ được tính một lần (lấy cái mạnh nhất), và "độc lập" nghĩa là thuộc các nhóm khác nhau. Phần Dự báo cũng vậy: mỗi nhóm đóng góp tối đa một phiếu. Tắt nút này để về cách cũ (mỗi chỉ báo cộng điểm riêng) và so sánh kết quả.
+- **Backtest:** khớp tại giá đóng cửa nến tín hiệu, có phí theo thị trường, chạm cả SL và TP trong một nến thì tính thua. Hiển thị tỷ lệ thắng, kỳ vọng (R), profit factor, sụt giảm tối đa, Sharpe và Sortino theo lệnh, MAE/MFE, kết quả theo chế độ thị trường (ADX), 30% dữ liệu mới nhất, và so với mua và giữ.
 
-## Lưu ý
+## Cảnh báo tương quan
 
-- **Đừng xoá file chỉ báo** để tắt nó: `app.js` vẫn đọc trực tiếp một số trường (`ind.hist`, `ind.sk/sd`, `A.ext.divAt/obV`, `A.zonesNow`, `A.fib`, `A.frvp`, `A.ewLast`...) cho cảnh báo vị thế và bộ quét. Muốn tắt thì dùng nút trên giao diện, hoặc bỏ `signalAt` / `vote` trong file đó.
-- Phụ thuộc: `divergence.js` cần `macd.js` + `stochrsi.js`; `bollinger.js`, `sr-zones.js`, `volume.js` cần `ind.volSma`.
-- Số `order` trong mỗi chỉ báo chỉ quyết định thứ tự hiển thị lý do và thứ tự vẽ chồng lớp (giữ đúng như bản cũ).
+Khi bộ quét có từ 3 mã trở lên cùng chiều, app hiện cảnh báo kèm tương quan lợi suất 1h trung bình giữa các mã đó (từ 0,6 trở lên thì coi là gần như một cược). Bot cũng nhắn cảnh báo tương tự khi một lần quét có từ `corrMin` (mặc định 3) tín hiệu mới cùng chiều.
+
+## Lưu dữ liệu nến
+
+Nút "⬇ Lưu nến" (thanh trên cùng) tải nến đang xem ra file CSV, tên file có mã, khung, thị trường, nguồn và thời điểm tải. Dữ liệu được lấy từ sàn tại lúc chạy nên chạy lại backtest sau này có thể ra kết quả khác; lưu file này để chạy lại đúng trên dữ liệu cũ.
+
+## Thêm hoặc sửa chỉ báo
+
+Mỗi chỉ báo tự đăng ký bằng `Indicators.register({...})` (xem chú thích ở khối "CORE: sổ đăng ký chỉ báo" trong `index.html`). Khai báo `group` để chỉ báo thuộc một nhóm khi gom nhóm. Nút bật/tắt, nhãn lý do và phiếu Dự báo có sẵn từ khai báo đó. Muốn đổi ngưỡng vào lệnh, cách gom nhóm hay cách tính Dự báo thì sửa khối "ENGINE: analyze()"; backtest nằm ở khối "ENGINE: backtest".
