@@ -1,7 +1,7 @@
 {
  "v": {
   "coin:BTCUSDT": {
-   "txt": "TRÁNH MUA",
+   "txt": "CHỜ",
    "ready": false,
    "last": 1792369931051,
    "side": "buy"
@@ -19,7 +19,7 @@
    "side": "buy"
   },
   "coin:BNBUSDT": {
-   "txt": "TRÁNH MUA",
+   "txt": "CHỜ",
    "ready": false,
    "last": 1794127369530,
    "side": "buy"
@@ -29,12 +29,12 @@
   "coin:BTCUSDT|1h|hull": 1794855599999,
   "coin:SOLUSDT|1h|hull": 1794596399999,
   "coin:BNBUSDT|4h|hull": 1793937599999,
-  "coin:BNBUSDT|1h|hull": 1794175199999,
+  "coin:BNBUSDT|1h|hull": 1794963599999,
   "coin:BNBUSDT|4h|st": 1794182399999,
   "coin:BTCUSDT|4h|hull": 1793937599999,
   "coin:ETHUSDT|4h|hull": 1793937599999,
   "coin:SOLUSDT|1h|st": 1793782799999,
-  "coin:SOLUSDT|4h|hull": 1793923199999,
+  "coin:SOLUSDT|4h|hull": 1794945599999,
   "coin:ETHUSDT|1h|hull": 1794913199999,
   "coin:ETHUSDT|1h|st": 1793307599999,
   "coin:BTCUSDT|1h|st": 1793307599999,
