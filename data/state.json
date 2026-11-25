@@ -7,7 +7,7 @@
    "side": "buy"
   },
   "coin:ETHUSDT": {
-   "txt": "CHỜ",
+   "txt": "TRÁNH MUA",
    "ready": false,
    "last": 1793789120032,
    "side": "buy"
@@ -34,7 +34,7 @@
   "coin:BTCUSDT|4h|hull": 1795406399999,
   "coin:ETHUSDT|4h|hull": 1795406399999,
   "coin:SOLUSDT|1h|st": 1795467599999,
-  "coin:SOLUSDT|4h|hull": 1795204799999,
+  "coin:SOLUSDT|4h|hull": 1795564799999,
   "coin:ETHUSDT|1h|hull": 1794992399999,
   "coin:ETHUSDT|1h|st": 1795467599999,
   "coin:BTCUSDT|1h|st": 1793307599999,
